@@ -74,7 +74,8 @@ Redis 위 `alerts` 큐에 임계값 경로가 잡을 넣는다. 워커는 설정
 
 ### 4.7 대시보드 지원 엔드포인트
 
-- `GET /stats` — 고정 인터벌(기본 1분)로 버킷팅한 에러 수(트렌드 차트용)
+- `GET /stats?service=&from=&to=&bucket=` — 인터벌(`bucket` 기본 1분)로 버킷팅한
+  에러 수(트렌드 차트용)
 - `GET /status` — 알려진 서비스(최근 24시간 `error_logs`의 distinct service)마다
   현재 윈도우 개수와 cooldown 활성 여부·TTL
 - `GET /alerts` — `alerts`(dispatched)와 `alert_failures`(failed)를 시간 역순으로
@@ -103,7 +104,10 @@ Redis 위 `alerts` 큐에 임계값 경로가 잡을 넣는다. 워커는 설정
   fallback, 알림은 정지). Redis 다운만으로는 실패로 치지 않음.
 - **보안** — `helmet`. CORS는 `CORS_ORIGIN` env로 명시(`origin: true` 금지).
   `.env.example`에 모든 변수를 플레이스홀더로, 실제 `.env`는 gitignore.
-  `@nestjs/throttler`를 `POST /errors`에 IP 기준 적용(기본 분당 100회).
+  `@nestjs/throttler`를 `POST /errors`에 IP 기준 적용 — 한도는 `RATE_LIMIT_PER_MIN`
+  (기본 600), `X-Load-Test` 헤더가 붙은 요청은 스킵(시뮬레이터·k6 부하 트래픽용).
+- **프론트 테스트** — 핵심 로직만 Vitest 유닛(응답 parse 래퍼, 쿼리 훅, 파생 로직).
+  렌더링/E2E 테스트는 범위 밖.
 - **README** — mermaid 아키텍처 다이어그램(수집 → 카운터 → 임계값 → cooldown → 큐 →
   워커 → webhook, Redis 다운 fallback 분기). "설계 근거" 절: 슬라이딩 vs 고정 윈도우,
   BullMQ+백오프+실패 테이블 vs 인프로세스 재시도, fallback fail-open vs fail-close,

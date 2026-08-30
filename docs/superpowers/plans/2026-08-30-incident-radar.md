@@ -14,11 +14,16 @@
 - 전역 임계값 기본 10건 / 60000ms 윈도우 (env 오버라이드), 태스크에서 재정의 금지
 - cooldown 은 `SET <key> <val> NX EX <sec>` 단일 명령
 - BullMQ 재시도: attempts 5, 지수 백오프 base 1000ms + 소량 지터
-- helmet, CORS 는 `CORS_ORIGIN` env 명시, `POST /errors` throttler IP 분당 100회
+- helmet, CORS 는 `CORS_ORIGIN` env 명시. `POST /errors` throttler 는
+  `RATE_LIMIT_PER_MIN`(기본 600) IP 기준, `X-Load-Test` 헤더가 있으면 스킵
+  (시뮬레이터·k6 트래픽용)
 - `/health`: DB 다운 503 / 정상 200 `ok`·`degraded`(Redis 다운이면 degraded)
 - `nestjs-pino` 구조화 로깅 (dev pretty, prod JSON)
 - 테스트는 실제 Redis·Postgres (로컬 `docker-compose.test.yml`, CI 서비스 컨테이너)
+- Redis 클라이언트는 ioredis (BullMQ 요구), 커넥션은 앱 전역 1개 재사용
+- 종료 시 `app.enableShutdownHooks()` + 각 모듈 `onModuleDestroy` 로 DB·Redis·큐 정리
 - 시뮬레이터는 `tools/simulator.ts`, docker-compose 에는 미포함
+- 프론트 테스트는 핵심 로직만(Vitest 유닛): parse 래퍼·쿼리 훅·파생 로직. 렌더링 테스트 없음
 - 카운터 인터페이스 `CounterStrategy` / `record(service, at)→Promise<number>`,
   테이블명 `alerts`·`alert_failures`, 헬스 플래그 `healthy` — 전 태스크 동일 명칭
 
@@ -28,16 +33,16 @@
 
 | # | 태스크 | 핵심 할 일 → 검증 | 개념 |
 |---|---|---|---|
-| 1 | 모노레포 뼈대 | `git init`·`.gitignore`; `pnpm-workspace.yaml`(apps/*, packages/*, tools); root `package.json` 스크립트→turbo 위임; `turbo.json` 파이프라인; `tsconfig.base.json`; `.env.example` 스켈레톤 → `pnpm install` 성공, `turbo run build --dry` 그래프 출력 | pnpm 워크스페이스 심링크, Turborepo `^`(upstream) 의존, tsconfig base 분리 |
-| 2 | `packages/shared` Zod 스키마 | 패키지 초기화(빌드 타깃 ESM+d.ts); `ErrorLogInput`·`ErrorLog`·`Alert`·`ServiceStatus`·`StatsResponse`·`AlertFailure` 스키마 + `z.infer` 동명 재수출; 배럴 익스포트; parse 라운드트립 유닛 1~2개 → `build`·`test` 통과 | 스키마 단일 출처에서 타입 파생, 라이브러리 패키지 빌드 산출물 구성 |
-| 3 | NestJS 백엔드 스캐폴드 | `apps/backend` 생성 + shared 의존; `@nestjs/config` + Zod env 검증(누락 시 부팅 실패); `GET /health` 스텁 200 → `start:dev` 부팅, `curl /health` 200 | Nest 모듈/DI, env 를 부팅 시점 검증 |
+| 1 | 모노레포 뼈대 | `git init`·`.gitignore`; `pnpm-workspace.yaml`(apps/*, packages/*, tools); root `package.json` 스크립트→turbo 위임; `turbo.json` 파이프라인; `tsconfig.base.json`; root 공유 ESLint(flat config)+Prettier; `.env.example` 스켈레톤 → `pnpm install` 성공, `turbo run build --dry` 그래프 출력, `turbo lint` 무에러 | pnpm 워크스페이스 심링크, Turborepo `^`(upstream) 의존, tsconfig·lint 설정 base 분리 |
+| 2 | `packages/shared` Zod 스키마 | 패키지 초기화 — `exports` 가 `./src/index.ts` 를 직접 가리켜 dev 에서 빌드 단계 없이 소비(앱 ts 가 트랜스파일); `ErrorLogInput`·`ErrorLog`·`Alert`·`ServiceStatus`·`StatsResponse`·`AlertFailure` 스키마 + `z.infer` 동명 재수출; 배럴 익스포트; parse 라운드트립 유닛 1~2개 → 백엔드에서 import·타입체크 통과, `test` 통과 | 스키마 단일 출처에서 타입 파생, 모노레포에서 라이브러리를 src 직접 노출 vs 빌드 산출물 소비 트레이드 |
+| 3 | NestJS 백엔드 스캐폴드 | `apps/backend` 생성 + shared 의존; `@nestjs/config` + Zod env 검증(누락 시 부팅 실패); `app.enableShutdownHooks()`; `GET /health` 스텁 200 → `start:dev` 부팅, `curl /health` 200, SIGTERM 시 깔끔히 종료 | Nest 모듈/DI, env 를 부팅 시점 검증, graceful shutdown 으로 커넥션 누수 방지 |
 | 4 | Next.js 프론트 스캐폴드 | `apps/frontend`(App Router, TS); Tailwind+shadcn init(버튼/카드만); shared 의존; `NEXT_PUBLIC_API_URL` 배선; 루트에 헤더만 → `pnpm dev` 로 백+프론트 동시 기동 | 서버/클라 컴포넌트 경계, `NEXT_PUBLIC_` 노출 규칙 |
 
 ### Phase 1 — 수집·이력
 
 | # | 태스크 | 핵심 할 일 → 검증 | 개념 |
 |---|---|---|---|
-| 5 | TypeORM + `error_logs` 마이그레이션 | DataSource(`synchronize:false`, migrations glob, CLI); `error_logs` 엔티티(id uuid, service, message, created_at tz); 첫 마이그레이션 = 테이블 + `(service, created_at)` 복합 인덱스; `migration:run`/`revert` 스크립트 → `migration:run` 후 psql 로 테이블·인덱스 확인, `revert` 롤백 | `synchronize:true` 위험(데이터 유실), 마이그레이션이 스키마 이력을 코드로, 복합 인덱스 leftmost-prefix 로 서비스별 시간범위 쿼리 |
+| 5 | TypeORM + `error_logs` 마이그레이션 | DataSource(`synchronize:false`, migrations glob, CLI); `error_logs` 엔티티(id uuid, service, message, created_at tz); 첫 마이그레이션 = `pgcrypto` 확장 + 테이블(`id DEFAULT gen_random_uuid()`) + `(service, created_at)` 복합 인덱스; `migration:run`/`revert` 스크립트 → `migration:run` 후 psql 로 테이블·인덱스·확장 확인, `revert` 롤백 | `synchronize:true` 위험(데이터 유실), 마이그레이션이 스키마 이력을 코드로, uuid 를 DB 기본값으로 생성, 복합 인덱스 leftmost-prefix 로 서비스별 시간범위 쿼리 |
 | 6 | 테스트 인프라 | `docker-compose.test.yml`(pg·redis, 고정 포트, tmpfs); Jest `unit`/`e2e` 프로젝트 분리 + setup; 테스트 전 마이그레이션, 간 truncate 유틸; `pnpm test` 가 compose up→migrate→jest→down 감쌈 → 빈 스위트도 실제 DB·Redis 붙어 초록 | 카운터·cooldown·fallback 은 Redis 동작이 테스트 대상이라 실물 필요; 이 태스크가 뒤 모든 e2e 의 전제 |
 | 7 | `POST`/`GET /errors` | shared 스키마 Zod 검증 파이프(실패 400+이슈); `POST` 저장 201; `GET`(service 필수, from/to, limit 기본100·상한1000, created_at desc); e2e(T6 하네스): 라운드트립·잘못된 본문 400·limit 클램프 → curl POST 201 / GET 값 포함 / `test:e2e` 초록 | 신뢰 경계 입력 검증, Nest 파이프 위치, limit 상한도 보안 표면 |
 
@@ -52,7 +57,7 @@
 
 | # | 태스크 | 핵심 할 일 → 검증 | 개념 |
 |---|---|---|---|
-| 10 | `tools/simulator.ts` | 가짜 서비스 목록 + 서비스별 에러율; 지수 분포 간격으로 `POST /errors` 반복; `--rate`/`--duration`/`--spike <svc>`/`--url`; `--spike` 는 임계값 초과 버스트; 종료 시 전송 건수 요약 → `--duration 10s` 후 데이터 축적, `--spike checkout` 시 T9 초과 로그 | 부하 생성기를 리포에 두면 대시보드·알림·k6 데모 가능; 지수 분포 간격 ≈ 포아송 트래픽 |
+| 10 | `tools/simulator.ts` | 가짜 서비스 목록 + 서비스별 에러율; 지수 분포 간격으로 `POST /errors` 반복(`X-Load-Test` 헤더 부착 → 레이트리밋 우회); `--rate`/`--duration`/`--spike <svc>`/`--url`; `--spike` 는 임계값 초과 버스트; 종료 시 전송 건수 요약 → `--duration 10s` 후 데이터 축적, `--spike checkout` 시 T9 초과 로그 | 부하 생성기를 리포에 두면 대시보드·알림·k6 데모 가능; 지수 분포 간격 ≈ 포아송 트래픽 |
 
 ### Phase 4 — 알림 발송
 
@@ -73,7 +78,7 @@
 
 | # | 태스크 | 핵심 할 일 → 검증 | 개념 |
 |---|---|---|---|
-| 16 | `GET /stats`·`/status`·`/alerts` | `/stats` 고정 인터벌(기본 1분) 버킷 카운트(`StatsResponse` 형태); `/status` 최근 24h distinct service 별 윈도우 카운트 + cooldown TTL; `/alerts` `alerts`+`alert_failures` 시간 역순 + `limit`; e2e 세트(스펙 6절): 버스트→알림 1회·`alert_failures` 빔·`GET /errors` N행·`/status` cooldown 활성 → 세 응답 shared 스키마 parse 통과, `test:e2e` 초록 | 대시보드용 읽기 모델을 원장 조회와 분리, SQL 시간 버킷팅 |
+| 16 | `GET /stats`·`/status`·`/alerts` | `/stats?service=&from=&to=&bucket=`(bucket 기본 1분) 버킷 카운트(`StatsResponse` 형태); `/status` 최근 24h distinct service 별 윈도우 카운트 + cooldown TTL; `/alerts?limit=` `alerts`+`alert_failures` 시간 역순; e2e 세트(스펙 6절): 버스트→알림 1회·`alert_failures` 빔·`GET /errors` N행·`/status` cooldown 활성 → 세 응답 shared 스키마 parse 통과, `test:e2e` 초록 | 대시보드용 읽기 모델을 원장 조회와 분리, SQL 시간 버킷팅 |
 
 ### Phase 7 — 기본기
 
@@ -82,14 +87,14 @@
 | 17 | GitHub Actions CI | `push`·`pull_request` 트리거; pnpm 캐시 + `install --frozen-lockfile`; `turbo lint`; pg·redis 서비스 컨테이너 + 마이그레이션 후 `turbo test` → 푸시 시 Actions 초록, lint 에러 넣으면 빨강 | CI 서비스 컨테이너로 로컬 compose 환경 재현, `frozen-lockfile` |
 | 18 | Swagger | `@nestjs/swagger` 셋업, `/docs` UI + `/docs-json`; 엔드포인트 요약·응답 스키마 주석 → `curl /docs-json` 모든 경로, `/docs` 렌더 | 코드에서 OpenAPI 파생, 문서 드리프트 감소 |
 | 19 | pino 전면 적용 | `nestjs-pino` 도입, 기본 로거 교체; dev pretty/prod JSON; 앞서 심은 커스텀 로그 포맷 정리 → dev pino 포맷, `NODE_ENV=production` JSON 한 줄 | 구조화 로그의 grep·집계 이점, 요청 스코프 로거·correlation id |
-| 20 | 보안 마무리 | `helmet`; CORS `CORS_ORIGIN` env 명시; `@nestjs/throttler` `POST /errors` IP 분당 100회; `.env.example` 에 쓰는 모든 변수 + 주석 → 연타 시 429, 미허용 Origin 차단, `.env.example`↔코드 env 키 1:1 | 레이트리밋을 수집 엔드포인트에(남용 표면), CORS 와일드카드 금지 |
+| 20 | 보안 마무리 | `helmet`; CORS `CORS_ORIGIN` env 명시; `@nestjs/throttler` `POST /errors` IP 기준 `RATE_LIMIT_PER_MIN`(기본 600), `X-Load-Test` 헤더면 스킵; `.env.example` 에 쓰는 모든 변수 + 주석 → 한도 초과 연타 시 429, `X-Load-Test` 로는 429 없음, 미허용 Origin 차단, `.env.example`↔코드 env 키 1:1 | 레이트리밋을 수집 엔드포인트에(남용 표면), 부하테스트용 우회 경로, CORS 와일드카드 금지 |
 | 21 | README | mermaid 다이어그램(수집→카운터→임계값→cooldown→큐→워커→webhook, Redis 다운 fallback 분기); "설계 근거" 절(슬라이딩 vs 고정 / BullMQ 재시도 vs 인프로세스 / fail-open vs fail-close / cooldown `SET NX EX`); `docker compose up` + curl 예시; 시뮬레이터 사용법 → mermaid 렌더, curl 예시 그대로 동작 | 설계 "왜"를 코드보다 오래 남김, 다이어그램으로 장애 분기 |
 
 ### Phase 8 — 프론트 개요 대시보드
 
 | # | 태스크 | 핵심 할 일 → 검증 | 개념 |
 |---|---|---|---|
-| 22 | API 클라이언트 + 쿼리/상태 | fetch 래퍼: 응답을 shared 스키마 parse, 실패 시 타입 붙은 에러 throw; TanStack Query Provider(`staleTime`·`refetchInterval` 5초); Zustand: 선택 서비스·기간만; `/stats`·`/status`·`/alerts` 쿼리 훅 → 5초 폴링·parse 통과, 백엔드 끄면 에러 상태 | 서버 상태(Query) vs UI 상태(Zustand) 분리, 공유 타입 있어도 경계 parse, `staleTime` vs `refetchInterval` |
+| 22 | API 클라이언트 + 쿼리/상태 | fetch 래퍼: 응답을 shared 스키마 parse, 실패 시 타입 붙은 에러 throw; TanStack Query Provider(`staleTime`·`refetchInterval` 5초); Zustand: 선택 서비스·기간만; `/stats`·`/status`·`/alerts` 쿼리 훅; Vitest 유닛: 래퍼가 잘못된 응답에 throw / 정상 응답 parse / 파생 로직(cooldown 남은 시간 등) → 5초 폴링·parse 통과, 백엔드 끄면 에러 상태, `pnpm --filter frontend test` 초록 | 서버 상태(Query) vs UI 상태(Zustand) 분리, 공유 타입 있어도 경계 parse, `staleTime` vs `refetchInterval` |
 | 23 | 레이아웃 셸 + 스탯 타일 | 상단바(제목·기간·폴링 인디케이터); 타일 4개(최근 60분 에러 / 24h 알림·실패 구분 / cooldown 중 서비스 수 / p95 수집→알림); 시맨틱 마크업(`main`, 제목 있는 `section`) → 실데이터로 숫자 채움, 없을 때 0 | 요약 먼저·상세 나중, 상태를 색·칩 형태로도 인코딩 |
 | 24 | 에러 추이 라인차트 | recharts 멀티시리즈, `/stats` 바인딩; 임계값 기준선·흐린 그리드·끝점 강조; 서비스 선택 Zustand 연동 → `--spike` 시 해당 라인이 임계선 돌파 | 차트도 디자인 대상(면 채움·그리드·끝점), 시계열 바인딩·리렌더 비용 |
 | 25 | Cooldown 패널 | `/status` 에서 cooldown 활성 서비스 + 남은 TTL; 시간 바/카운트다운 → `--spike` 직후 cooldown 표시·TTL 감소 | 폴링 주기와 TTL 표시 불일치 처리(보간 vs 폴링값) |
@@ -100,7 +105,7 @@
 
 | # | 태스크 | 핵심 할 일 → 검증 | 개념 |
 |---|---|---|---|
-| 28 | `docker-compose.yml` 풀스택 | `postgres`·`redis`(볼륨·헬스체크); `backend` Dockerfile + 엔트리포인트(둘 healthy 후 `migration:run`→앱); `frontend` Dockerfile(프로덕션 빌드·서버, API URL 주입); `.env` 한 벌로 기동 → 클린 상태 `docker compose up` 후 대시보드 접속, 호스트에서 `simulator --spike checkout` 시 추이·cooldown·알림 5초 폴링 반영 | 마이그레이션을 엔트리포인트에(컨테이너=스키마 최신), 헬스체크 + `depends_on: service_healthy` 로 기동 순서 |
+| 28 | `docker-compose.yml` 풀스택 | `postgres`·`redis`(볼륨·헬스체크); `backend` Dockerfile + 엔트리포인트(둘 healthy 후 `migration:run`→앱); `frontend` Dockerfile — `NEXT_PUBLIC_API_URL` 을 **build arg** 로 넘겨 번들에 박고 프로덕션 서버 기동; `.env` 한 벌로 기동 → 클린 상태 `docker compose up` 후 대시보드 접속, 호스트에서 `simulator --spike checkout`(`X-Load-Test` 헤더) 시 추이·cooldown·알림 5초 폴링 반영 | 마이그레이션을 엔트리포인트에(컨테이너=스키마 최신), `NEXT_PUBLIC_*` 는 빌드 타임 고정, 헬스체크 + `depends_on: service_healthy` 로 기동 순서 |
 
 ## 스트레치 (코어 완료 후, 이 순서 — 착수 시 플랜 별도)
 
@@ -110,12 +115,21 @@
 4. `/radar` 3D 레이더(react-three-fiber + drei), 별도 라우트 격리
 5. k6 스크립트(100 rps, p95) + cooldown 전/후 알림 횟수 비교
 
-## 리뷰 결과 (2회)
+## 리뷰 결과 (3회)
 
 - **1차 스펙 커버리지:** 스펙 2·3절 코어 + 4.1~4.7 + 5~8절 전 항목이 T1~T28 에
   매핑됨. 누락 없음. 스펙 4.5 "alert suppressed" 로그를 T14 에 명시 항목으로 추가.
 - **2차 순서·일관성:** 순서 버그 1건 수정 — e2e 있는 수집 엔드포인트(T7)가 테스트
   하네스(T6)보다 앞이었음 → 하네스를 먼저로 재배치. 네이밍(`CounterStrategy`·
-  `record`·`alerts`/`alert_failures`·`healthy`) 및 기본값(10/60000ms) 단일 정의
-  확인. "적절한 처리" 류 모호 표현 없음, 모든 태스크에 실행 가능한 검증 있음.
-  잔여 구현 선택(T2 빌드 도구, T16 시간 버킷팅 방식)은 실행자 재량으로 남김.
+  `record`·`alerts`/`alert_failures`·`healthy`) 및 기본값(10/60000ms) 단일 정의 확인.
+- **3차 누락·충돌:** 8건 반영 —
+  (A) 레이트리밋 분당 100회가 k6 100 rps·시뮬레이터와 충돌 → `RATE_LIMIT_PER_MIN`
+  기본 600 + `X-Load-Test` 헤더 우회.
+  (B) dev 에서 `packages/shared` 재빌드 문제 → `exports` 로 `src` 직접 노출, 빌드
+  단계 제거.
+  (C) `turbo lint` 대상 ESLint/Prettier 설정 주체 없음 → T1 에 root 공유 설정 편입.
+  (D) `error_logs.id` uuid 생성 미정 → T5 에서 `pgcrypto` + `gen_random_uuid()`.
+  (E) graceful shutdown 없음 → T3 에 `enableShutdownHooks()`.
+  (F) 프론트 테스트 0개 → 핵심 로직 Vitest 유닛(T22), 렌더링 테스트는 범위 밖(결정).
+  (G) `NEXT_PUBLIC_API_URL` 빌드 타임 고정 → T28 에 build arg 명시.
+  (H) `/stats` 쿼리 파라미터 복원 → T16 `?service=&from=&to=&bucket=`.
