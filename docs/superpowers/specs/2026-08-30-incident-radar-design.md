@@ -1,393 +1,142 @@
-# Incident Radar — Design Spec
-
-Date: 2026-08-30
-Status: Approved for planning
-
-## 1. Purpose
-
-Real-time error monitoring and alerting service. Services report errors; when a
-service's error count crosses a threshold within a sliding time window, the
-system dispatches an alert asynchronously, with deduplication (cooldown) and
-retry with exponential backoff. If Redis is unavailable, error counting falls
-back to a database query so threshold detection keeps working (dispatch itself
-pauses while Redis is down — see section 5.5).
-
-The system is delivered as a pnpm + Turborepo monorepo with a NestJS backend, a
-Next.js frontend dashboard, and a shared package holding the Zod schemas that
-both apps import as the single source of truth for the API contract.
-
-## 2. Scope
-
-### In scope (core)
-
-- Error ingestion and history query.
-- Redis sliding-window per-service error counting (Sorted Set based).
-- Threshold detection -> asynchronous alert dispatch (BullMQ) with exponential
-  backoff retry; exhausted retries recorded to a failures table.
-- Cooldown-based alert deduplication (`SET NX EX`).
-- Redis health probe with fallback to a database `COUNT` query when Redis is down.
-- Latency logging for the ingest -> alert-enqueued path, tagged with the counting
-  path taken (`redis` or `db-fallback`).
-- Basics: unit tests, one e2e set, GitHub Actions CI (lint + test), TypeORM
-  migrations (no `synchronize`), OpenAPI docs via `@nestjs/swagger`, structured
-  logging via `nestjs-pino`, `/health` endpoint, `helmet`, explicit CORS,
-  `.env.example`, IP rate limit on `POST /errors`, README with a mermaid
-  architecture diagram and design-rationale section.
-- Frontend overview dashboard: per-service error trend line chart, current
-  cooldown state, recent alert history table, each with loading / error / empty
-  states and Zod runtime validation of every API response.
-- `docker-compose.yml` bringing up Postgres, Redis, backend, frontend with one
-  command.
-
-### Out of scope (stretch — build only if time remains, in this order)
-
-1. Fixed-window counter implementation behind the `CounterStrategy` interface,
-   plus a README comparison note.
-2. Performance report page and a `GET /metrics/latency` endpoint comparing the
-   Redis path against the DB fallback path.
-3. Auth.js admin login gating the dashboard.
-4. 3D service radar at `/radar` (react-three-fiber + drei).
-5. k6 load test script (100 rps, p95) and a cooldown before/after alert-count
-   comparison script.
-
-The `CounterStrategy` interface ships in the core with only the sliding-window
-implementation. The interface is a seam for stretch item 1, not speculative
-abstraction: the fallback path (section 5.5) already needs a second counter
-implementation selected at runtime, so the seam earns its place immediately.
-
-## 3. Time budget
-
-Approximately 40 hours (about one week at 6 hours/day). The scope split above is
-driven by this budget. If a core item overruns, stretch items are dropped, not
-core items.
-
-## 4. Monorepo layout
-
-```
-incident-radar/
-  apps/
-    backend/      NestJS + TypeORM + BullMQ
-    frontend/     Next.js (App Router) + Tailwind + shadcn/ui
-  packages/
-    shared/       Zod schemas + inferred TypeScript types
-  docker-compose.yml
-  turbo.json
-  pnpm-workspace.yaml
-  .env.example
-```
-
-- Package manager: pnpm workspaces.
-- Task runner: Turborepo (`turbo lint`, `turbo test`, `turbo build`, `turbo dev`).
-- `packages/shared` is consumed by both apps via the workspace protocol
-  (`"@incident-radar/shared": "workspace:*"`).
-
-## 5. Backend design
-
-### 5.1 Ingestion and history
-
-- `POST /errors` with body `{ service: string, message: string }`. Validated by a
-  Zod-backed validation pipe using the `ErrorLogInput` schema from
-  `packages/shared`. Inserts one row into `error_logs`.
-- `GET /errors?service=&from=&to=&limit=` returns matching rows ordered by
-  `created_at` descending. `service` is required; `from` / `to` are optional ISO
-  timestamps; `limit` defaults to 100 and is capped at 1000 so the endpoint
-  cannot be made to return an unbounded result set.
-- `error_logs` table: `id` (uuid pk), `service` (text), `message` (text),
-  `created_at` (timestamptz, default now). Composite index on
-  `(service, created_at)`.
-
-**Concepts:** TypeORM migration files (never `synchronize: true`); why a
-composite index on `(service, created_at)` serves the per-service time-range
-query (leftmost-prefix rule); request validation at the trust boundary with Zod.
-
-### 5.2 Sliding-window counter (Redis)
-
-`CounterStrategy` interface:
-
-```
-interface CounterStrategy {
-  record(service: string, at: number): Promise<number>; // returns current window count
-}
-```
-
-`RedisSlidingWindowCounter` implementation, per service key
-`count:<service>` (a Sorted Set):
-
-1. `ZADD count:<service> <at> <unique-member>` — member is a unique id
-   (`<at>-<random>`), score is the event timestamp in ms.
-2. `ZREMRANGEBYSCORE count:<service> 0 <at - windowMs>` — drop events older than
-   the window.
-3. `ZCARD count:<service>` — the count of events currently inside the window.
-4. `PEXPIRE count:<service> <windowMs * 2>` — safety TTL so an idle service's key
-   is reclaimed.
-
-Steps 1-4 run in a single pipeline / `MULTI` so the count reflects one
-consistent state.
-
-**Concepts:** why a Sorted Set gives a true sliding window, versus fixed-window
-`INCR` + `EXPIRE` which double-counts across the boundary (a burst spanning two
-adjacent fixed windows can be up to 2x the threshold without ever tripping it);
-cost of trimming on every write; the safety TTL.
-
-### 5.3 Threshold detection and cooldown
-
-- After `record()` returns `count`, if `count > threshold` the service is a
-  candidate for alerting. There is a single global `threshold` and `windowMs`
-  from env (defaults: threshold 10, window 60000 ms), applied identically to
-  every service. Per-service thresholds are a possible later extension, not in
-  this build.
-- Before enqueuing, attempt the cooldown lock:
-  `SET cooldown:<service> 1 NX EX <cooldownSeconds>`.
-  - Reply `OK` -> lock acquired -> enqueue the alert job.
-  - Reply `nil` -> a cooldown is already active -> skip silently.
-
-**Concepts:** `SET key val NX EX` is a single atomic operation, so it is a safe
-distributed lock for "one alert per service per cooldown window"; a
-`GET`-then-`SET` sequence is a race (two requests both read no key, both write).
-
-### 5.4 Alert dispatch (BullMQ)
-
-- A BullMQ queue `alerts` on the existing Redis instance. The threshold path adds
-  a job `{ service, count, windowMs, threshold, at }`.
-- A BullMQ worker processes the job by calling a webhook URL from config. If no
-  URL is configured, it logs a structured "alert dispatched" line (mock sink).
-- Job options: `attempts: 5`, `backoff: { type: 'exponential', delay: 1000 }`
-  (1s, 2s, 4s, 8s, 16s). A small random jitter is added in a custom backoff
-  strategy to avoid synchronized retries.
-- On success, a `completed` listener inserts a row into `alerts`: `id`,
-  `service`, `count`, `threshold`, `window_ms`, `status` = `dispatched`,
-  `at` (timestamptz).
-- On `failed` after the final attempt, a `failed` listener inserts a row into
-  `alert_failures`: `id`, `service`, `payload` (jsonb), `error` (text),
-  `attempts` (int), `failed_at` (timestamptz). This is the "failure history
-  persisted separately" requirement — kept as its own table rather than a status
-  value so a full failure record (payload, last error, attempt count) is
-  queryable without widening `alerts`.
-- The webhook call carries an idempotency key (`<service>:<window-start-epoch>`)
-  in a header so a duplicate delivery from an at-least-once retry is
-  recognizable by the receiver.
-
-**Concepts:** queue-based async processing decouples ingestion latency from
-dispatch latency; at-least-once delivery and why the consumer must be idempotent;
-exponential backoff with jitter; the dead-letter pattern (here: a failures table
-rather than a separate queue, which is enough at this scale).
-
-### 5.5 Redis failure and DB fallback
-
-- A health component pings Redis every 5 seconds and also flips the flag on any
-  command-level connection error. State is a single boolean
-  `redisHealthy`.
-- The counter is selected per call: `redisHealthy` -> `RedisSlidingWindowCounter`;
-  otherwise -> `DbCountCounter`, which runs
-  `SELECT COUNT(*) FROM error_logs WHERE service = $1 AND created_at > now() - $2::interval`.
-- The DB fallback is coarser: it counts from a fixed interval boundary measured
-  from "now", it has no sub-second precision, and it adds database load. This is
-  accepted: the alternative (failing closed when Redis is down) is worse for an
-  alerting system.
-- Cooldown and dispatch still require Redis (BullMQ needs it). When Redis is
-  down, threshold detection via the DB path still runs and logs, but alert
-  enqueue is skipped and a structured "alert suppressed: redis down" line is
-  emitted. So while Redis is down the counting path degrades gracefully but the
-  alerting path is effectively paused. This is a known ceiling for the 40-hour
-  build; a fuller design would use a DB-backed outbox drained when Redis
-  recovers.
-
-**Concepts:** graceful degradation and failing open vs closed; a health flag is
-enough here, a full circuit breaker (half-open probing, rolling error windows) is
-not warranted at this scale.
-
-### 5.6 Latency logging
-
-- A timestamp is captured when `POST /errors` is received and again when the
-  alert job is enqueued (or when the threshold path completes without enqueue).
-- One `nestjs-pino` structured line per ingested error:
-  `{ service, count, path: 'redis' | 'db-fallback', enqueued: boolean, latencyMs }`.
-
-**Concepts:** structured logging as the basis for later latency comparison
-without a metrics stack; measuring the two counting paths from the same log
-field.
-
-### 5.7 Dashboard support endpoints
-
-- `GET /stats?service=&from=&to=&bucket=` — error counts bucketed by a fixed
-  interval (default 1 minute) for the trend chart. Returns
-  `{ service, buckets: { t: string, count: number }[] }[]`.
-- `GET /status` — `ServiceStatus[]`. "Known services" are the distinct `service`
-  values in `error_logs` within the last 24 hours. For each: its current window
-  count (via the active counter, Redis or fallback) and whether
-  `cooldown:<service>` is set, with its TTL.
-- `GET /alerts?limit=` — recent alert history for the table, a union of `alerts`
-  (`status: dispatched`) and `alert_failures` (`status: failed`) ordered by time
-  descending.
-
-## 6. Shared package (`packages/shared`)
-
-Zod schemas and their inferred types, one module, re-exported from the package
-root:
-
-- `ErrorLogInput` — `{ service, message }` (POST body).
-- `ErrorLog` — a stored row `{ id, service, message, createdAt }`.
-- `Alert` — one row of alert history for the table, from either `alerts` or
-  `alert_failures`:
-  `{ id, service, status: 'dispatched' | 'failed', at, count?, threshold?, windowMs?, attempts?, error? }`
-  (the count/threshold/windowMs fields are present for `dispatched`, the
-  attempts/error fields for `failed`).
-- `ServiceStatus` — `{ service, windowCount, cooldownActive, cooldownTtlSec }`.
-- `StatsResponse` — the `GET /stats` shape.
-- `AlertFailure` — a row from `alert_failures`.
-
-Types are `z.infer<typeof Schema>`. The backend uses the input schemas in
-validation pipes and validates its own responses in tests; the frontend parses
-every response with the response schemas.
-
-**Concepts:** one source of truth for the contract; `z.infer` to avoid
-hand-written duplicate types; why runtime parsing still matters when the types
-are shared (the running server can return something the compiler never checked —
-a schema drift, a serialization bug, a proxy error body).
-
-## 7. Basics
-
-### 7.1 Tests
-
-Unit (Jest):
-
-- Sliding-window count: events inside the window are counted; an event older than
-  `windowMs` is trimmed and not counted; the boundary case (`at - windowMs`
-  exactly) is defined and tested.
-- Cooldown: first call acquires the lock and returns "enqueue"; a second call
-  within the window returns "skip"; a call after TTL expiry acquires again.
-- Fallback selection: `redisHealthy = false` routes `record()` to `DbCountCounter`;
-  `true` routes to the Redis implementation.
-
-Determinism: an injectable clock (a `now()` provider) is used so tests do not
-sleep. Redis and Postgres are real instances, not mocks, for the
-integration-level unit tests of the counter — provided by CI service containers
-in GitHub Actions and by a `docker-compose.test.yml` locally.
-
-e2e (`supertest`, one set):
-
-- Seed nothing. `POST /errors` for one service N times where N > threshold within
-  the window. Assert: exactly one alert is dispatched (the cooldown suppresses
-  the rest), `alert_failures` is empty, `GET /errors?service=` returns N rows,
-  `GET /status` shows the service with `cooldownActive: true`.
-
-**Concepts:** deterministic time via dependency injection; testing against real
-Redis/Postgres in CI service containers rather than mocking away the behavior
-under test.
-
-### 7.2 CI
-
-GitHub Actions, triggered on `push` and `pull_request`:
-
-- `pnpm install --frozen-lockfile`
-- `pnpm turbo lint`
-- `pnpm turbo test` with `postgres` and `redis` service containers and the env
-  they need.
-
-### 7.3 Migrations
-
-- TypeORM DataSource configured with `synchronize: false`, `migrations` glob set.
-- Migration files committed under `apps/backend/src/migrations`.
-- `pnpm --filter backend migration:run` is invoked by the backend container's
-  entrypoint before the app starts, and as a step in CI before tests.
-
-### 7.4 API docs
-
-`@nestjs/swagger` with DTO decorators; served at `/docs`. The OpenAPI JSON is
-available at `/docs-json`.
-
-### 7.5 Observability
-
-- `nestjs-pino` for structured request logging and app logs; pretty transport in
-  dev, JSON in production.
-- `GET /health` checks the database connection and Redis. Returns `503` when the
-  database is down. When the database is reachable it returns `200` with
-  `{ status: 'ok' | 'degraded', db: 'up', redis: 'up' | 'down' }` — `degraded`
-  when Redis is down, since counting still works via fallback but the alerting
-  path is paused. Redis being down does not by itself fail the check.
-
-### 7.6 Security
-
-- `helmet` on the Nest app.
-- CORS configured explicitly from `CORS_ORIGIN` env (the frontend origin); not
-  `origin: true`.
-- `.env.example` lists every variable with placeholder values; real `.env` is
-  gitignored.
-- `@nestjs/throttler` applied to `POST /errors`, keyed by client IP, limit from
-  env (default 100 requests per minute per IP).
-
-### 7.7 README
-
-- Mermaid architecture diagram (ingestion -> counter -> threshold -> cooldown ->
-  queue -> worker -> webhook, with the Redis-down fallback branch).
-- "Design rationale" section explaining: sliding window vs fixed window; BullMQ +
-  exponential backoff + failures table vs in-process retry; fallback failing open
-  vs closed; `SET NX EX` for cooldown.
-- Local run instructions (`docker compose up`) and the per-endpoint curl
-  examples.
-
-## 8. Frontend design
-
-Stack: Next.js (App Router) + TypeScript, Tailwind CSS, shadcn/ui, TanStack Query
-(5-second polling), Zustand (UI-only state: selected service, selected time
-range), recharts.
-
-Single route `/` (overview dashboard) with three panels:
-
-- **Error trend** — a recharts line chart from `GET /stats`, one line per
-  service, over the selected time range.
-- **Cooldown state** — from `GET /status`; lists services currently in cooldown
-  with the remaining TTL.
-- **Recent alerts** — a table from `GET /alerts`; newest first; failed alerts
-  visually distinguished.
-
-Each panel independently renders loading, error, and empty states. Every response
-is parsed with the corresponding Zod schema from `packages/shared` before it
-reaches component state; a parse failure renders the panel's error state.
-
-Accessibility: semantic landmarks (`main`, `section` with headings), visible
-keyboard focus styles retained, the alerts table wrapped in an `aria-live`
-region so a newly polled alert row is announced.
-
-**Concepts:** TanStack Query cache keys, `staleTime`, and polling via
-`refetchInterval`; parsing at the boundary even with shared types; separating
-server state (TanStack Query) from ephemeral UI state (Zustand).
+# Incident Radar — 설계 스펙
+
+작성일: 2026-08-30 · 상태: 플랜 작성 승인됨
+
+## 1. 목적
+
+실시간 에러 모니터링·알림 서비스. 서비스들이 에러를 보고하면 슬라이딩 시간 윈도우 안에서 서비스별 에러 수가 임계값을 넘을 때 알림을 비동기로 발송한다. 중복 알림은 cooldown으로 억제하고 발송 실패는 지수 백오프로 재시도한다. Redis 불가용 시 에러 카운팅은 DB 쿼리로 fallback 하여 임계값 감지는 계속되지만, 알림 발송은 Redis 복구 전까지 일시 정지한다(5.5). pnpm + Turborepo 모노레포이며 NestJS 백엔드, Next.js 프론트 대시보드, 두 앱이 함께 쓰는 공유 패키지(API 계약의 단일 출처)로 구성한다.
+
+## 2. 범위
+
+### 코어
+
+- 에러 수집·이력 조회
+- Redis Sorted Set 기반 서비스별 슬라이딩 윈도우 카운팅
+- 임계값 감지 → BullMQ 비동기 알림, 지수 백오프 재시도, 소진 시 실패 이력 저장
+- cooldown 기반 중복 알림 억제
+- Redis 헬스 프로브 + 다운 시 DB COUNT 쿼리로 fallback
+- 수집→알림 enqueue 구간 지연시간 로깅(경로 `redis`/`db-fallback` 태깅)
+- 기본기: 유닛 테스트, e2e 1세트, GitHub Actions CI(lint+test), TypeORM
+  마이그레이션(synchronize 금지), @nestjs/swagger 문서, nestjs-pino 로깅, `/health`,
+  helmet, 명시적 CORS, `.env.example`, `POST /errors` IP 레이트리밋, mermaid
+  다이어그램·설계 근거를 담은 README
+- 프론트 개요 대시보드: 에러 추이 라인차트, cooldown 상태, 최근 알림 테이블. 각 패널
+  로딩/에러/빈 상태, 모든 응답 Zod 런타임 검증
+- Postgres·Redis·backend·frontend를 한 번에 띄우는 docker-compose
+
+### 스트레치 (시간 남으면 이 순서)
+
+1. 고정 윈도우 카운터 구현체를 같은 인터페이스 뒤에 추가 + README 비교 노트
+2. 성능 리포트 페이지 + Redis vs DB fallback 지연시간 비교 엔드포인트
+3. Auth.js 관리자 로그인으로 대시보드 보호
+4. `/radar` 3D 서비스 레이더(react-three-fiber + drei)
+5. k6 부하 스크립트(100 rps, p95) + cooldown 전/후 알림 횟수 비교 스크립트
+
+카운터 인터페이스는 코어에 슬라이딩 구현만 넣는다. 투기적 추상화가 아니라 fallback
+경로(5.5)가 이미 런타임에 두 번째 구현을 골라야 하므로 seam이 바로 값을 한다.
+
+## 3. 시간 예산
+
+약 40시간(6시간/일 × 약 1주). 코어가 초과되면 스트레치를 버리고 코어는 유지한다.
+
+## 4. 모노레포 구성
+
+- `apps/backend` — NestJS + TypeORM + BullMQ
+- `apps/frontend` — Next.js(App Router) + Tailwind + shadcn/ui
+- `packages/shared` — Zod 스키마 + 파생 타입, 양쪽 앱이 워크스페이스 프로토콜로 소비
+- 루트: `docker-compose.yml`, `turbo.json`, `pnpm-workspace.yaml`, `.env.example`
+- pnpm 워크스페이스 + Turborepo(lint/test/build/dev)
+
+## 5. 백엔드 설계
+
+### 5.1 수집과 이력
+
+`POST /errors`는 본문 `{ service, message }`를 공유 스키마로 검증 후 `error_logs`에
+저장한다. `GET /errors`는 `service`(필수)·`from`/`to`(선택 ISO)·`limit`(기본 100,
+상한 1000)로 조회한다. `error_logs`에 `(service, created_at)` 복합 인덱스를 둔다.
+
+### 5.2 슬라이딩 윈도우 카운터 (Redis)
+
+서비스별 Sorted Set 키에 이벤트 추가 → 윈도우보다 오래된 항목 제거 → 현재 개수 조회 → 안전용 TTL 갱신을 파이프라인으로 묶어 일관된 상태로 읽는다. 카운터는 공통 인터페이스 뒤에 두어 fallback 구현과 교체 가능하게 한다. 고정 윈도우(INCR+EXPIRE) 방식은 경계에 걸친 버스트를 임계값의 최대 2배까지 놓칠 수 있어 Sorted Set을 쓴다.
+
+### 5.3 임계값 감지와 cooldown
+
+현재 개수가 전역 임계값(기본 10건 / 60초 윈도우)을 넘으면 알림 후보다. 서비스별 임계값은 후속 확장. enqueue 전에 `SET cooldown:<service> ... NX EX`로 락을 시도해 성공하면 enqueue, 이미 있으면 조용히 skip 한다(단일 원자 연산이라 GET 후 SET의 레이스를 피함).
+
+### 5.4 알림 발송 (BullMQ)
+
+Redis 위 `alerts` 큐에 임계값 경로가 잡을 넣는다. 워커는 설정된 webhook URL을 호출하고 URL이 없으면 구조화 로그로 대체한다. 재시도 5회, 지수 백오프(1·2·4·8·16초) + 동기화 재시도를 피하는 소량 지터. 성공은 `alerts` 테이블, 최종 실패는 `alert_failures` 테이블(페이로드·마지막 에러·시도 횟수)에 기록한다 — 실패 이력을 별도 테이블로 둔 건 원본 요구이며 `alerts`를 넓히지 않고 전체 실패 레코드를 조회하기 위함. webhook 호출에 멱등성 키를 헤더로 실어 재시도 중복 전달을 수신 측이 식별한다.
+
+### 5.5 Redis 장애와 DB fallback
+
+헬스 컴포넌트가 5초마다 Redis를 확인하고 커맨드 연결 오류 시에도 플래그를 내린다. 플래그에 따라 카운터를 호출 단위로 선택한다: 정상이면 Redis 슬라이딩, 아니면 DB COUNT 쿼리(고정 인터벌 기준, sub-second 정밀도 없음, DB 부하 증가). 알림 시스템에서 "Redis 죽으면 닫아버리기"가 더 나쁘므로 이 절충을 수용한다. cooldown과 발송은 Redis(BullMQ)가 필요하므로 다운 중에는 감지·로깅만 계속되고 enqueue는 skip하며 "alert suppressed" 로그를 남긴다. 카운팅은 graceful degrade, 알림 경로는 사실상 일시 정지 — 40시간 빌드의 알려진 한계이며 더 완전한 설계는 Redis 복구 시 비우는 DB 아웃박스를 쓴다. 이 규모엔 플래그로 충분하고 풀 서킷 브레이커는 과하다.
+
+### 5.6 지연시간 로깅
+
+`POST /errors` 수신 시각과 알림 enqueue 시각(또는 enqueue 없이 임계값 경로 종료 시각)을 재서 pino 구조화 로그 한 줄로 남긴다: 서비스·개수·경로·enqueue 여부·지연 ms. 메트릭 스택 없이 두 카운팅 경로 지연 비교의 근거가 된다.
+
+### 5.7 대시보드 지원 엔드포인트
+
+- `GET /stats` — 고정 인터벌(기본 1분)로 버킷팅한 에러 수(트렌드 차트용)
+- `GET /status` — 알려진 서비스(최근 24시간 `error_logs`의 distinct service)마다
+  현재 윈도우 개수와 cooldown 활성 여부·TTL
+- `GET /alerts` — `alerts`(dispatched)와 `alert_failures`(failed)를 시간 역순으로
+  합친 최근 이력
+
+## 6. 공유 패키지 (`packages/shared`)
+
+`ErrorLogInput`, `ErrorLog`, `Alert`, `ServiceStatus`, `StatsResponse`, `AlertFailure` 스키마와 파생 타입을 한 모듈에서 정의·재수출한다. `Alert`은 `alerts` 또는 `alert_failures` 한 행을 표현하며 `status`에 따라 채워지는 필드가 다르다. 백엔드는 입력 스키마를 검증에 쓰고, 프론트는 모든 응답을 응답 스키마로 파싱한다. 타입을 공유해도 구동 중 서버는 컴파일러가 못 본 걸 반환할 수 있어(스키마 드리프트·직렬화 버그·프록시 에러 본문) 경계 파싱이 필요하다.
+
+## 7. 기본기
+
+- **테스트** — 유닛(Jest): 슬라이딩 카운트(윈도우 내 포함·오래된 것 트리밍·경계값),
+  cooldown(1차 통과 / 윈도우 내 2차 skip / TTL 만료 후 재획득), fallback 선택(플래그
+  라우팅). `now()` 프로바이더 주입으로 sleep 없는 결정론적 테스트. 카운터 통합
+  테스트는 목이 아닌 실제 Redis·Postgres — CI는 서비스 컨테이너, 로컬은
+  `docker-compose.test.yml`. e2e(supertest, 1세트): 임계값 초과 버스트 → 알림 정확히
+  1회(나머지 cooldown), `alert_failures` 비어 있음, `GET /errors` N행, `GET /status`
+  cooldown 활성 표시.
+- **CI** — GitHub Actions, push·PR: 의존성 설치 → `turbo lint` → `postgres`·`redis`
+  서비스 컨테이너를 띄운 채 `turbo test`.
+- **마이그레이션** — synchronize 끔, 마이그레이션 파일 커밋. 백엔드 컨테이너
+  엔트리포인트가 앱 기동 전에·CI가 테스트 전에 실행.
+- **API 문서** — `@nestjs/swagger`로 `/docs` 서빙, JSON은 `/docs-json`.
+- **관측성** — `nestjs-pino`(dev pretty, prod JSON). `GET /health`는 DB 다운이면
+  503, DB 정상이면 200에 `ok`/`degraded`(Redis 다운이면 degraded — 카운팅은
+  fallback, 알림은 정지). Redis 다운만으로는 실패로 치지 않음.
+- **보안** — `helmet`. CORS는 `CORS_ORIGIN` env로 명시(`origin: true` 금지).
+  `.env.example`에 모든 변수를 플레이스홀더로, 실제 `.env`는 gitignore.
+  `@nestjs/throttler`를 `POST /errors`에 IP 기준 적용(기본 분당 100회).
+- **README** — mermaid 아키텍처 다이어그램(수집 → 카운터 → 임계값 → cooldown → 큐 →
+  워커 → webhook, Redis 다운 fallback 분기). "설계 근거" 절: 슬라이딩 vs 고정 윈도우,
+  BullMQ+백오프+실패 테이블 vs 인프로세스 재시도, fallback fail-open vs fail-close,
+  cooldown의 `SET NX EX`. 로컬 실행법과 엔드포인트별 curl 예시.
+
+## 8. 프론트엔드 설계
+
+스택: Next.js(App Router) + TS, Tailwind, shadcn/ui, TanStack Query(5초 폴링), Zustand(UI 상태만 — 선택 서비스·기간), recharts. 단일 라우트 `/`에 3개 패널: 에러 추이 라인차트(`/stats`), cooldown 상태(`/status`, 남은 TTL), 최근 알림 테이블(`/alerts`, 최신순, 실패 구분). 각 패널이 독립적으로 로딩·에러·빈 상태를 렌더하고, 모든 응답은 컴포넌트 상태로 들어가기 전에 공유 스키마로 파싱한다(실패 시 해당 패널 에러 상태). 접근성: 시맨틱 랜드마크, 키보드 포커스 스타일 유지, 알림 테이블을 `aria-live` 영역으로 감싸 새 행을 읽어줌. 서버 상태(TanStack Query)와 임시 UI 상태(Zustand)를 분리한다.
 
 ## 9. docker-compose
 
-Services:
+`postgres`(명명 볼륨·헬스체크), `redis`(헬스체크), `backend`(둘이 healthy 해야 시작,
+엔트리포인트가 마이그레이션 후 앱 기동), `frontend`(`backend` 의존, Next.js 프로덕션
+서버). 모든 설정은 `.env.example`에 문서화된 환경변수.
 
-- `postgres` (with a named volume, healthcheck).
-- `redis` (healthcheck).
-- `backend` — depends on both healthy; entrypoint runs `migration:run` then
-  `node dist/main`.
-- `frontend` — depends on `backend`; runs the Next.js production server; built
-  with `NEXT_PUBLIC_API_URL` pointing at `backend`.
+## 10. 실행 순서
 
-All configuration via environment variables documented in `.env.example`.
+각 단계는 시연 가능한 결과로 끝난다.
 
-## 10. Execution order
+1. 스캐폴딩: pnpm 워크스페이스 + Turborepo + 세 패키지, `git init`. `pnpm dev`로 양쪽
+   앱 부팅 확인
+2. `packages/shared`: Zod 스키마 작성, 백엔드에서 타입 import·타입체크 통과 확인
+3. 백엔드 수집: 첫 마이그레이션, `error_logs`, `POST`/`GET /errors`, curl 확인
+4. Redis 슬라이딩 카운터 + 임계값 감지(로그만). 버스트 curl로 카운트 로그 확인
+5. cooldown + BullMQ 알림 + 재시도 + `alert_failures`. 알림 1회, webhook 강제 실패로
+   백오프 재시도 후 실패 행 확인
+6. Redis 다운 fallback: redis 정지 후 curl, `db-fallback` 로그와 수집 정상 확인
+7. 기본기(순서대로): 테스트 → CI → Swagger → pino+`/health` → 보안 → README
+8. 프론트 개요 대시보드
+9. docker-compose로 전체 스택 한 번에 기동
+10. 스트레치를 2절 순서대로, 시간 되는 만큼
 
-Each step ends in something demonstrable.
-
-1. Scaffold: pnpm workspace + Turborepo + the three packages; `git init`. Verify
-   `pnpm dev` boots both apps.
-2. `packages/shared`: author the Zod schemas. Verify a backend file imports a
-   type and typechecks.
-3. Backend ingestion: first migration, `error_logs`, `POST /errors`,
-   `GET /errors`. Verify with curl.
-4. Redis sliding-window counter + threshold detection (log only, no alert yet).
-   Verify a curl burst produces the count log.
-5. Cooldown + BullMQ alert dispatch + retry + `alert_failures`. Verify a burst
-   produces exactly one alert; force a webhook failure and observe the backoff
-   retries then the failures row.
-6. Redis-down fallback: stop the Redis container, curl, observe the
-   `db-fallback` path log and that ingestion still succeeds.
-7. Basics, in order: tests -> CI -> Swagger -> pino + `/health` -> security ->
-   README.
-8. Frontend overview dashboard.
-9. `docker-compose` full stack up with one command.
-10. Stretch items in the section 2 order, as time allows.
-
-The implementation plan breaks each step into 5-15 minute sub-tasks, each tagged
-with the concept it exercises.
+구현 플랜에서 각 단계를 5~15분 세부 태스크로 쪼개고 태스크마다 짚을 개념을 태깅한다.
