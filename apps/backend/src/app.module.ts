@@ -2,9 +2,11 @@ import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { validateEnv, type Env } from "./config/env.schema";
+import { CounterModule } from "./counter/counter.module";
 import { entities } from "./db/entities";
 import { ErrorsModule } from "./errors/errors.module";
 import { HealthModule } from "./health/health.module";
+import { RedisModule } from "./redis/redis.module";
 
 @Module({
   imports: [
@@ -25,8 +27,10 @@ import { HealthModule } from "./health/health.module";
         uuidExtension: "pgcrypto", // gen_random_uuid() 사용
       }),
     }),
+    RedisModule,
     HealthModule,
     ErrorsModule,
+    CounterModule,
   ],
 })
 export class AppModule {}
