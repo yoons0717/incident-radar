@@ -12,7 +12,8 @@
     "declaration": false,
     "isolatedModules": false,
     "moduleDetection": "auto",
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "types": ["node", "jest"]
   },
-  "include": ["src"]
+  "include": ["src", "test", "jest.config.ts"]
 }

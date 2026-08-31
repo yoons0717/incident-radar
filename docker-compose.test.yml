@@ -1,0 +1,30 @@
+# 테스트 전용 인프라. dev 스택(docker-compose.yml)과 포트가 겹치지 않게
+# 5433 / 6380 을 쓰고, name 을 따로 줘서 컨테이너도 분리한다. tmpfs 라 죽이면 흔적 0.
+name: incident-radar-test
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ir
+      POSTGRES_PASSWORD: ir
+      POSTGRES_DB: incident_radar
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ir -d incident_radar"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  redis-test:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20

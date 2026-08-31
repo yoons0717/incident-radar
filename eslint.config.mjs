@@ -1,5 +1,6 @@
 // @ts-check
 import js from "@eslint/js";
+import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
@@ -20,6 +21,13 @@ export default tseslint.config(
     files: ["**/*.{ts,tsx,mts,cts}"],
     rules: {
       "no-undef": "off",
+    },
+  },
+  {
+    // Node 스크립트(.mjs/.js): process, __dirname 등 Node 전역 인식
+    files: ["**/*.{js,mjs,cjs}"],
+    languageOptions: {
+      globals: { ...globals.node },
     },
   },
   {
