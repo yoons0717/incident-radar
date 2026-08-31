@@ -33,8 +33,8 @@
 
 | # | 태스크 | 핵심 할 일 → 검증 | 개념 |
 |---|---|---|---|
-| 1 | 모노레포 뼈대 | `git init`·`.gitignore`; `pnpm-workspace.yaml`(apps/*, packages/*, tools); root `package.json` 스크립트→turbo 위임; `turbo.json` 파이프라인; `tsconfig.base.json`; root 공유 ESLint(flat config)+Prettier; `.env.example` 스켈레톤 → `pnpm install` 성공, `turbo run build --dry` 그래프 출력, `turbo lint` 무에러 | pnpm 워크스페이스 심링크, Turborepo `^`(upstream) 의존, tsconfig·lint 설정 base 분리 |
-| 2 | `packages/shared` Zod 스키마 | 패키지 초기화 — `exports` 가 `./src/index.ts` 를 직접 가리켜 dev 에서 빌드 단계 없이 소비(앱 ts 가 트랜스파일); `ErrorLogInput`·`ErrorLog`·`Alert`·`ServiceStatus`·`StatsResponse`·`AlertFailure` 스키마 + `z.infer` 동명 재수출; 배럴 익스포트; parse 라운드트립 유닛 1~2개 → 백엔드에서 import·타입체크 통과, `test` 통과 | 스키마 단일 출처에서 타입 파생, 모노레포에서 라이브러리를 src 직접 노출 vs 빌드 산출물 소비 트레이드 |
+| 1 | 모노레포 뼈대 | `git init`·`.gitignore`; `pnpm-workspace.yaml`(apps/*, packages/*, tools); root `package.json`(스크립트→turbo 위임, `packageManager: "pnpm@9.x"`, `engines.node: ">=20"`) + `.nvmrc`; `turbo.json` 파이프라인; `tsconfig.base.json`; root 공유 ESLint(flat config)+Prettier; `.env.example` 스켈레톤 → `pnpm install` 성공, `turbo run build --dry` 그래프 출력, `turbo lint` 무에러 | pnpm 워크스페이스 심링크, Turborepo `^`(upstream) 의존, tsconfig·lint·버전 고정을 root 에서 |
+| 2 | `packages/shared` Zod 스키마 | `tsup` 로 빌드(ESM+CJS+d.ts), `dev` 스크립트는 `tsup --watch`(Turbo `dependsOn:["^build"]` 가 순서 처리); `ErrorLogInput`(`message` 는 `.max(8192)`)·`ErrorLog`·`Alert`·`ServiceStatus`·`StatsResponse`·`AlertFailure` 스키마 + `z.infer` 동명 재수출; 배럴 익스포트; parse 라운드트립 유닛 1~2개 → 백엔드에서 import·타입체크 통과, `test` 통과 | 스키마 단일 출처에서 타입 파생, 라이브러리 패키지 빌드 산출물(d.ts 포함)과 watch, 입력 크기 상한도 방어 표면 |
 | 3 | NestJS 백엔드 스캐폴드 | `apps/backend` 생성 + shared 의존; `@nestjs/config` + Zod env 검증(누락 시 부팅 실패); `app.enableShutdownHooks()`; `GET /health` 스텁 200 → `start:dev` 부팅, `curl /health` 200, SIGTERM 시 깔끔히 종료 | Nest 모듈/DI, env 를 부팅 시점 검증, graceful shutdown 으로 커넥션 누수 방지 |
 | 4 | Next.js 프론트 스캐폴드 | `apps/frontend`(App Router, TS); Tailwind+shadcn init(버튼/카드만); shared 의존; `NEXT_PUBLIC_API_URL` 배선; 루트에 헤더만 → `pnpm dev` 로 백+프론트 동시 기동 | 서버/클라 컴포넌트 경계, `NEXT_PUBLIC_` 노출 규칙 |
 
@@ -43,7 +43,7 @@
 | # | 태스크 | 핵심 할 일 → 검증 | 개념 |
 |---|---|---|---|
 | 5 | TypeORM + `error_logs` 마이그레이션 | DataSource(`synchronize:false`, migrations glob, CLI); `error_logs` 엔티티(id uuid, service, message, created_at tz); 첫 마이그레이션 = `pgcrypto` 확장 + 테이블(`id DEFAULT gen_random_uuid()`) + `(service, created_at)` 복합 인덱스; `migration:run`/`revert` 스크립트 → `migration:run` 후 psql 로 테이블·인덱스·확장 확인, `revert` 롤백 | `synchronize:true` 위험(데이터 유실), 마이그레이션이 스키마 이력을 코드로, uuid 를 DB 기본값으로 생성, 복합 인덱스 leftmost-prefix 로 서비스별 시간범위 쿼리 |
-| 6 | 테스트 인프라 | `docker-compose.test.yml`(pg·redis, 고정 포트, tmpfs); Jest `unit`/`e2e` 프로젝트 분리 + setup; 테스트 전 마이그레이션, 간 truncate 유틸; `pnpm test` 가 compose up→migrate→jest→down 감쌈 → 빈 스위트도 실제 DB·Redis 붙어 초록 | 카운터·cooldown·fallback 은 Redis 동작이 테스트 대상이라 실물 필요; 이 태스크가 뒤 모든 e2e 의 전제 |
+| 6 | 테스트 인프라 | `docker-compose.test.yml`(pg·redis, **비표준 포트** 5433·6380 로 dev 스택과 공존, tmpfs); Jest `unit`/`e2e` 프로젝트 분리 + setup; 테스트 전 마이그레이션, 테스트 간 테이블 truncate + `FLUSHDB` 유틸; `pnpm test` 가 compose up→migrate→jest→down 감쌈 → 빈 스위트도 실제 DB·Redis 붙어 초록 | 카운터·cooldown·fallback 은 Redis 동작이 테스트 대상이라 실물 필요; 이 태스크가 뒤 모든 e2e 의 전제 |
 | 7 | `POST`/`GET /errors` | shared 스키마 Zod 검증 파이프(실패 400+이슈); `POST` 저장 201; `GET`(service 필수, from/to, limit 기본100·상한1000, created_at desc); e2e(T6 하네스): 라운드트립·잘못된 본문 400·limit 클램프 → curl POST 201 / GET 값 포함 / `test:e2e` 초록 | 신뢰 경계 입력 검증, Nest 파이프 위치, limit 상한도 보안 표면 |
 
 ### Phase 2 — 슬라이딩 윈도우 카운팅
@@ -115,7 +115,7 @@
 4. `/radar` 3D 레이더(react-three-fiber + drei), 별도 라우트 격리
 5. k6 스크립트(100 rps, p95) + cooldown 전/후 알림 횟수 비교
 
-## 리뷰 결과 (3회)
+## 리뷰 결과 (4회)
 
 - **1차 스펙 커버리지:** 스펙 2·3절 코어 + 4.1~4.7 + 5~8절 전 항목이 T1~T28 에
   매핑됨. 누락 없음. 스펙 4.5 "alert suppressed" 로그를 T14 에 명시 항목으로 추가.
@@ -125,11 +125,15 @@
 - **3차 누락·충돌:** 8건 반영 —
   (A) 레이트리밋 분당 100회가 k6 100 rps·시뮬레이터와 충돌 → `RATE_LIMIT_PER_MIN`
   기본 600 + `X-Load-Test` 헤더 우회.
-  (B) dev 에서 `packages/shared` 재빌드 문제 → `exports` 로 `src` 직접 노출, 빌드
-  단계 제거.
+  (B) dev 에서 `packages/shared` 재빌드 문제 → `tsup` 빌드 + `tsup --watch`,
+  Turbo `^build` 로 순서 처리(4차에서 "src 직접 노출"에서 되돌림 — 백엔드가
+  node_modules 안 .ts 를 컴파일하도록 설정하는 게 더 큰 함정).
   (C) `turbo lint` 대상 ESLint/Prettier 설정 주체 없음 → T1 에 root 공유 설정 편입.
   (D) `error_logs.id` uuid 생성 미정 → T5 에서 `pgcrypto` + `gen_random_uuid()`.
   (E) graceful shutdown 없음 → T3 에 `enableShutdownHooks()`.
   (F) 프론트 테스트 0개 → 핵심 로직 Vitest 유닛(T22), 렌더링 테스트는 범위 밖(결정).
   (G) `NEXT_PUBLIC_API_URL` 빌드 타임 고정 → T28 에 build arg 명시.
   (H) `/stats` 쿼리 파라미터 복원 → T16 `?service=&from=&to=&bucket=`.
+- **4차 Phase 0–1 집중:** (B) 를 tsup 빌드로 되돌림. T1 에 `packageManager`·
+  `engines`·`.nvmrc` 로 버전 고정. T2 `ErrorLogInput.message` `.max(8192)`.
+  T6 테스트 스택 비표준 포트(5433·6380) + 테스트 간 `FLUSHDB`.
