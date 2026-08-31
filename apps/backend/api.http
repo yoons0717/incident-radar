@@ -1,0 +1,46 @@
+# 수동 API 테스트용.
+# - VS Code: "REST Client" (humao.rest-client) 설치 후 각 요청 위 "Send Request" 클릭
+# - JetBrains(IntelliJ/WebStorm): 내장 지원, 그냥 이 파일 열고 ▶ 클릭
+#
+# 먼저: docker compose up -d  &&  pnpm --filter backend migration:run  &&  pnpm --filter backend dev
+
+@base = http://localhost:3000
+
+### 헬스체크
+GET {{base}}/health
+
+### 에러 저장 (정상) → 201
+POST {{base}}/errors
+Content-Type: application/json
+
+{
+  "service": "checkout",
+  "message": "payment gateway timeout"
+}
+
+### 에러 저장 (검증 실패: service 없음) → 400 + issues
+POST {{base}}/errors
+Content-Type: application/json
+
+{
+  "message": "no service field"
+}
+
+### 에러 저장 (검증 실패: message 8192 초과) → 400
+POST {{base}}/errors
+Content-Type: application/json
+
+{
+  "service": "checkout",
+  "message": "x"
+}
+# ↑ 실제로 8193자를 넣어야 실패. REST Client 로는 긴 문자열 붙여넣기.
+
+### 이력 조회 (service 필수) → 200 [ ... ]
+GET {{base}}/errors?service=checkout
+
+### 이력 조회 (시간 범위 + limit) → 200
+GET {{base}}/errors?service=checkout&from=2026-01-01T00:00:00.000Z&limit=50
+
+### 이력 조회 (service 누락) → 400
+GET {{base}}/errors
