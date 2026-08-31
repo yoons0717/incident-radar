@@ -42,7 +42,7 @@
 
 | # | 태스크 | 핵심 할 일 → 검증 | 개념 |
 |---|---|---|---|
-| 5 | TypeORM + `error_logs` 마이그레이션 | DataSource(`synchronize:false`, migrations glob, CLI); `error_logs` 엔티티(id uuid, service, message, created_at tz); 첫 마이그레이션 = `pgcrypto` 확장 + 테이블(`id DEFAULT gen_random_uuid()`) + `(service, created_at)` 복합 인덱스; `migration:run`/`revert` 스크립트 → `migration:run` 후 psql 로 테이블·인덱스·확장 확인, `revert` 롤백 | `synchronize:true` 위험(데이터 유실), 마이그레이션이 스키마 이력을 코드로, uuid 를 DB 기본값으로 생성, 복합 인덱스 leftmost-prefix 로 서비스별 시간범위 쿼리 |
+| 5 | dev `docker-compose.yml`(pg16+redis7) + TypeORM + `error_logs` 마이그레이션 | DataSource(`synchronize:false`, migrations glob, `uuidExtension:"pgcrypto"` → `gen_random_uuid()`); `error_logs` 엔티티(id uuid, service, message, created_at tz); 첫 마이그레이션 = 테이블(`id DEFAULT gen_random_uuid()`, PG13+ 코어라 확장 불필요) + `(service, created_at)` 복합 인덱스; `migration:run`/`revert`/`generate` 스크립트 → `migration:run` 후 psql 로 테이블·인덱스 확인, `revert` 롤백, `generate` 가 "no changes"(엔티티↔마이그레이션 동기화) | `synchronize:true` 위험(데이터 유실), 마이그레이션이 스키마 이력을 코드로, uuid 를 DB 기본값으로 생성, 복합 인덱스 leftmost-prefix 로 서비스별 시간범위 쿼리 |
 | 6 | 테스트 인프라 | `docker-compose.test.yml`(pg·redis, **비표준 포트** 5433·6380 로 dev 스택과 공존, tmpfs); Jest `unit`/`e2e` 프로젝트 분리 + setup; 테스트 전 마이그레이션, 테스트 간 테이블 truncate + `FLUSHDB` 유틸; `pnpm test` 가 compose up→migrate→jest→down 감쌈 → 빈 스위트도 실제 DB·Redis 붙어 초록 | 카운터·cooldown·fallback 은 Redis 동작이 테스트 대상이라 실물 필요; 이 태스크가 뒤 모든 e2e 의 전제 |
 | 7 | `POST`/`GET /errors` | shared 스키마 Zod 검증 파이프(실패 400+이슈); `POST` 저장 201; `GET`(service 필수, from/to, limit 기본100·상한1000, created_at desc); e2e(T6 하네스): 라운드트립·잘못된 본문 400·limit 클램프 → curl POST 201 / GET 값 포함 / `test:e2e` 초록 | 신뢰 경계 입력 검증, Nest 파이프 위치, limit 상한도 보안 표면 |
 
@@ -137,3 +137,7 @@
 - **4차 Phase 0–1 집중:** (B) 를 tsup 빌드로 되돌림. T1 에 `packageManager`·
   `engines`·`.nvmrc` 로 버전 고정. T2 `ErrorLogInput.message` `.max(8192)`.
   T6 테스트 스택 비표준 포트(5433·6380) + 테스트 간 `FLUSHDB`.
+- **실행 중 조정:** `gen_random_uuid()` 는 PG13+ 코어라 `pgcrypto` `CREATE EXTENSION`
+  불필요 → T5 마이그레이션에서 뺌. TypeORM 이 이 함수를 쓰게 하려면 DataSource·
+  TypeOrmModule 에 `uuidExtension: "pgcrypto"` (확장 설치가 아니라 함수 선택 옵션).
+  dev 인프라(`docker-compose.yml` pg16+redis7)를 T5 에 편입(풀스택 서비스는 T28).
