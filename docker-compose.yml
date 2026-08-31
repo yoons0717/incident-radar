@@ -1,0 +1,31 @@
+# 로컬 개발용 인프라. backend/frontend 서비스는 T28에서 추가한다.
+services:
+  postgres:
+    image: postgres:16-alpine
+    # 이 3개 값은 .env 의 DATABASE_URL(postgres://ir:ir@localhost:5432/incident_radar)과 맞춰야 한다.
+    environment:
+      POSTGRES_USER: ir
+      POSTGRES_PASSWORD: ir
+      POSTGRES_DB: incident_radar
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ir -d incident_radar"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

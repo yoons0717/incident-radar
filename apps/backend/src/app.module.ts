@@ -1,6 +1,8 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
-import { validateEnv } from "./config/env.schema";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { TypeOrmModule } from "@nestjs/typeorm";
+import { validateEnv, type Env } from "./config/env.schema";
+import { entities } from "./db/entities";
 import { HealthModule } from "./health/health.module";
 
 @Module({
@@ -10,6 +12,17 @@ import { HealthModule } from "./health/health.module";
       // 로컬 .env 를 먼저, 없으면 모노레포 루트 .env 를 읽는다.
       envFilePath: [".env", "../../.env"],
       validate: validateEnv,
+    }),
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>) => ({
+        type: "postgres",
+        url: config.get("DATABASE_URL", { infer: true }),
+        entities,
+        synchronize: false, // 스키마 변경은 마이그레이션으로만
+        migrationsRun: false, // 마이그레이션은 CLI/엔트리포인트에서 (T28)
+        uuidExtension: "pgcrypto", // gen_random_uuid() 사용
+      }),
     }),
     HealthModule,
   ],
