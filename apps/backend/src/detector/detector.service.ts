@@ -28,22 +28,32 @@ export class DetectorService {
     this.windowMs = config.get("ALERT_WINDOW_MS", { infer: true });
   }
 
-  async check(service: string): Promise<void> {
-    const count = await this.counter.record(service, this.clock.now());
-    if (count <= this.threshold) return;
+  /** @param startedAt 컨트롤러가 요청 수신 시각(Date.now())을 넘긴다 — 지연 측정용 */
+  async check(service: string, startedAt: number): Promise<void> {
+    const now = this.clock.now();
+    const count = await this.counter.record(service, now);
 
-    this.logger.warn(
-      `threshold exceeded: service=${service} count=${count} window=${this.windowMs}ms`,
-    );
-
-    // cooldown 락을 잡은 요청만 알림을 낸다 (나머지는 조용히 skip → 알림 폭풍 억제).
-    if (await this.cooldown.tryAcquire(service)) {
-      await this.alerts.enqueue({
-        service,
-        count,
-        threshold: this.threshold,
-        windowMs: this.windowMs,
-      });
+    let enqueued = false;
+    if (count > this.threshold) {
+      this.logger.warn(
+        `threshold exceeded: service=${service} count=${count} window=${this.windowMs}ms`,
+      );
+      // cooldown 락을 잡은 요청만 알림을 낸다 (나머지는 조용히 skip → 알림 폭풍 억제).
+      if (await this.cooldown.tryAcquire(service)) {
+        await this.alerts.enqueue({
+          service,
+          count,
+          threshold: this.threshold,
+          windowMs: this.windowMs,
+          windowStart: Math.floor(now / this.windowMs) * this.windowMs,
+        });
+        enqueued = true;
+      }
     }
+
+    // path 는 T14 에서 redis/db-fallback 로 갈린다. 지금은 Redis 경로뿐.
+    this.logger.log(
+      `ingest path=redis service=${service} count=${count} enqueued=${enqueued} latencyMs=${Date.now() - startedAt}`,
+    );
   }
 }

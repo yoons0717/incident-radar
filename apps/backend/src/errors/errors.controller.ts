@@ -15,9 +15,10 @@ export class ErrorsController {
   /** POST /errors — 에러 로그 1건 저장 (Nest 는 POST 에 기본 201) */
   @Post()
   async create(@Body(new ZodValidationPipe(ErrorLogInput)) body: ErrorLogInput) {
+    const startedAt = Date.now(); // 수신~감지 종료 지연 측정 (detector 가 로그로 남김)
     const saved = await this.errors.create(body);
     // 저장 직후 임계값 경로. Redis 장애 시 여기서 throw → T14 에서 fallback/격리.
-    await this.detector.check(body.service);
+    await this.detector.check(body.service, startedAt);
     return saved;
   }
 

@@ -43,7 +43,11 @@ export class AlertsService {
     if (this.webhookUrl) {
       const res = await fetch(this.webhookUrl, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          // 재시도돼도 같은 값 → 수신 측이 중복 전달을 식별 (at-least-once 소비자 멱등성)
+          "x-idempotency-key": `${data.service}:${data.windowStart}`,
+        },
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(`webhook responded ${res.status}`);

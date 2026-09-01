@@ -7,7 +7,13 @@ import { Alert } from "../db/entities/alert.entity";
 import { AlertsService } from "./alerts.service";
 import type { AlertJobData } from "./alerts.types";
 
-const JOB: AlertJobData = { service: "checkout", count: 12, threshold: 10, windowMs: 60_000 };
+const JOB: AlertJobData = {
+  service: "checkout",
+  count: 12,
+  threshold: 10,
+  windowMs: 60_000,
+  windowStart: 1_699_999_980_000,
+};
 
 function makeService(webhookUrl?: string) {
   const queue = { add: jest.fn().mockResolvedValue(undefined) } as unknown as Queue<AlertJobData>;
@@ -68,6 +74,9 @@ describe("AlertsService", () => {
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       const [url, init] = fetchSpy.mock.calls[0]!;
       expect(url).toBe("https://hook.example/incident");
+      expect((init?.headers as Record<string, string>)["x-idempotency-key"]).toBe(
+        "checkout:1699999980000",
+      );
       expect(JSON.parse(String(init?.body))).toMatchObject({ service: "checkout", count: 12 });
       expect(await testDataSource.getRepository(Alert).count()).toBe(1);
 

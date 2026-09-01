@@ -3,7 +3,13 @@ import type { AlertsService } from "./alerts.service";
 import { AlertsProcessor } from "./alerts.processor";
 import type { AlertJobData } from "./alerts.types";
 
-const DATA: AlertJobData = { service: "checkout", count: 12, threshold: 10, windowMs: 60_000 };
+const DATA: AlertJobData = {
+  service: "checkout",
+  count: 12,
+  threshold: 10,
+  windowMs: 60_000,
+  windowStart: 1_699_999_980_000,
+};
 
 function makeProcessor() {
   const recordFailureCalls: Array<[AlertJobData, string, number]> = [];
