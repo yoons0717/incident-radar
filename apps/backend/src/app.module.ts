@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { validateEnv, type Env } from "./config/env.schema";
+import { CooldownModule } from "./cooldown/cooldown.module";
 import { CounterModule } from "./counter/counter.module";
 import { entities } from "./db/entities";
 import { ErrorsModule } from "./errors/errors.module";
@@ -31,6 +32,7 @@ import { RedisModule } from "./redis/redis.module";
     HealthModule,
     ErrorsModule,
     CounterModule,
+    CooldownModule,
   ],
 })
 export class AppModule {}

@@ -14,6 +14,7 @@ export const envSchema = z.object({
   REDIS_URL: z.string().url(),
   ALERT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   ALERT_THRESHOLD: z.coerce.number().int().positive().default(10),
+  ALERT_COOLDOWN_SEC: z.coerce.number().int().positive().default(300),
 });
 
 export type Env = z.infer<typeof envSchema>;
