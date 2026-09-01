@@ -1,4 +1,4 @@
-import { type INestApplication } from "@nestjs/common";
+import { Logger, type INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { ErrorLog } from "@incident-radar/shared";
 import request from "supertest";
@@ -57,6 +57,28 @@ describe("errors API (e2e)", () => {
     await http().post("/errors").send({ service: "auth", message: "x" }).expect(201);
     const res = await http().get("/errors").query({ service: "auth", limit: 5000 }).expect(200);
     expect(res.body).toHaveLength(1);
+  });
+
+  it("같은 service 를 임계값+1 회 POST 하면 초과 로그가 뜬다 (기본 임계값 10)", async () => {
+    const warn = jest
+      .spyOn(Logger.prototype, "warn")
+      .mockImplementation(() => undefined);
+    const exceeded = () =>
+      warn.mock.calls.filter((c) => String(c[0]).includes("threshold exceeded"));
+
+    try {
+      for (let i = 0; i < 10; i++) {
+        await http().post("/errors").send({ service: "payments", message: "boom" }).expect(201);
+      }
+      expect(exceeded()).toHaveLength(0);
+
+      await http().post("/errors").send({ service: "payments", message: "boom" }).expect(201);
+      const hits = exceeded();
+      expect(hits.length).toBeGreaterThanOrEqual(1);
+      expect(String(hits[0]?.[0])).toContain("payments");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("from/to 로 시간 범위를 거른다", async () => {
