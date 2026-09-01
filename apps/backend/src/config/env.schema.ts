@@ -15,6 +15,11 @@ export const envSchema = z.object({
   ALERT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   ALERT_THRESHOLD: z.coerce.number().int().positive().default(10),
   ALERT_COOLDOWN_SEC: z.coerce.number().int().positive().default(300),
+  // 비우면(또는 미설정) 워커가 webhook 대신 구조화 로그로 대체.
+  WEBHOOK_URL: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.string().url().optional(),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;
