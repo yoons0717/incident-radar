@@ -5,6 +5,7 @@ import type { Clock } from "../common/clock";
 import type { Env } from "../config/env.schema";
 import type { CooldownService } from "../cooldown/cooldown.service";
 import type { CounterStrategy } from "../counter/counter.strategy";
+import type { RedisHealthService } from "../redis/redis-health.service";
 import { DetectorService } from "./detector.service";
 
 const THRESHOLD = 10;
@@ -16,7 +17,7 @@ const WINDOW_START = Math.floor(NOW / WINDOW) * WINDOW;
  * counter 는 무조건 fixedCount 반환, cooldown 은 acquire 로 성공/실패 지정.
  * enqueue 호출 여부/인자를 추적한다. Nest DI 없이 직접 조립.
  */
-function makeDetector(fixedCount: number, acquire: boolean, now = NOW) {
+function makeDetector(fixedCount: number, acquire: boolean, now = NOW, healthy = true) {
   const recordCalls: Array<{ service: string; at: number }> = [];
   const counter: CounterStrategy = {
     record: async (service, at) => {
@@ -32,12 +33,13 @@ function makeDetector(fixedCount: number, acquire: boolean, now = NOW) {
       enqueueCalls.push(data);
     },
   } as unknown as AlertsService;
+  const redisHealth = { healthy } as RedisHealthService;
   const config = {
     get: (key: keyof Env) => (key === "ALERT_THRESHOLD" ? THRESHOLD : WINDOW),
   } as unknown as ConfigService<Env, true>;
 
   return {
-    detector: new DetectorService(counter, clock, cooldown, alerts, config),
+    detector: new DetectorService(counter, clock, cooldown, alerts, redisHealth, config),
     recordCalls,
     enqueueCalls,
     now,
@@ -106,5 +108,26 @@ describe("DetectorService", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(enqueueCalls).toHaveLength(0);
     expect(String(log.mock.calls.at(-1)?.[0])).toContain("enqueued=false");
+  });
+
+  it("Redis 다운(healthy=false)이면 임계값 초과여도 알림을 큐에 안 넣고 suppressed 로그만", async () => {
+    const { detector, enqueueCalls } = makeDetector(THRESHOLD + 1, true, NOW, false);
+    await detector.check("checkout", Date.now());
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("threshold exceeded"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("alert suppressed: redis down"));
+    expect(enqueueCalls).toHaveLength(0);
+
+    const line = String(log.mock.calls.at(-1)?.[0]);
+    expect(line).toContain("path=db-fallback");
+    expect(line).toContain("enqueued=false");
+  });
+
+  it("Redis 다운이어도 임계값 이하면 suppressed 로그도 없다 (경로만 db-fallback)", async () => {
+    const { detector } = makeDetector(THRESHOLD, true, NOW, false);
+    await detector.check("checkout", Date.now());
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(String(log.mock.calls.at(-1)?.[0])).toContain("path=db-fallback");
   });
 });
