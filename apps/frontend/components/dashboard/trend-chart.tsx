@@ -51,7 +51,7 @@ export function TrendChart() {
   const lastRow = rows.at(-1);
 
   return (
-    <section className="mt-3 rounded-[10px] border border-border bg-surface shadow-card">
+    <section className="rounded-[10px] border border-border bg-surface shadow-card">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-[15px] py-[13px]">
         <h2 className="text-[12.5px] font-semibold">
           에러 추이 <span className="ml-1 font-normal text-[11px] text-ink-faint">errors / min</span>

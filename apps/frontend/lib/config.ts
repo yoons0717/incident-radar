@@ -9,3 +9,6 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000
  * 응답에 임계값을 싣는 엔드포인트가 없어 상수로 둔다 — 백엔드에서 바꾸면 여기도.
  */
 export const ALERT_THRESHOLD = Number(process.env.NEXT_PUBLIC_ALERT_THRESHOLD ?? 10);
+
+/** cooldown 전체 길이(초). 백엔드 ALERT_COOLDOWN_SEC 기본값과 맞춘다 — 바 채움 비율의 분모. */
+export const COOLDOWN_SEC = Number(process.env.NEXT_PUBLIC_COOLDOWN_SEC ?? 300);
