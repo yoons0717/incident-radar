@@ -17,7 +17,8 @@ export class ErrorsController {
   async create(@Body(new ZodValidationPipe(ErrorLogInput)) body: ErrorLogInput) {
     const startedAt = Date.now(); // 수신~감지 종료 지연 측정 (detector 가 로그로 남김)
     const saved = await this.errors.create(body);
-    // 저장 직후 임계값 경로. Redis 장애 시 여기서 throw → T14 에서 fallback/격리.
+    // 저장 직후 임계값 경로. Redis 다운은 CounterSelector 가 DB 집계로 폴백하므로
+    // 여기서 throw 되지 않는다 (Redis·DB 둘 다 실패해야 500).
     await this.detector.check(body.service, startedAt);
     return saved;
   }

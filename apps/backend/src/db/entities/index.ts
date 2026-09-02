@@ -7,5 +7,3 @@ import { ErrorLog } from "./error-log.entity";
  * 양쪽이 이걸 import 해서 목록이 갈라지지 않게 한다. 새 엔티티는 여기에만 추가.
  */
 export const entities = [ErrorLog, Alert, AlertFailure];
-
-export { ErrorLog, Alert, AlertFailure };

@@ -38,7 +38,8 @@ export class RedisSlidingWindowCounter implements CounterStrategy {
       .exec();
 
     // exec() → [[err, res], ...] 순서대로. ZCARD 는 3번째(index 2).
-    // 실패를 조용히 0 으로 삼키면 알림이 억제되므로 명시적으로 throw (T14 fallback 이 잡는다).
+    // 실패를 조용히 0 으로 삼키면 알림이 억제되므로 명시적으로 throw.
+    // (Redis 헬스 훅이 이 에러로 플래그를 내리고 CounterSelector 가 DB 집계로 폴백한다)
     if (!results) {
       throw new Error("Redis MULTI(exec) 결과가 없음");
     }

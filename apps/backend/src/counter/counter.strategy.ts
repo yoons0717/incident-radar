@@ -1,7 +1,7 @@
 /**
  * "최근 윈도우 안에 이 서비스의 이벤트가 몇 건인가" 를 세는 전략.
- * 구현체는 Redis 슬라이딩 윈도우(T8)와 DB COUNT fallback(T14) 두 가지이고,
- * 런타임에 이 인터페이스 뒤에서 교체된다.
+ * 구현체는 Redis 슬라이딩 윈도우와 DB COUNT fallback 두 가지이고,
+ * CounterSelector 가 Redis 헬스 플래그를 보고 호출 단위로 고른다.
  */
 export interface CounterStrategy {
   /**
