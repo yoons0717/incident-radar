@@ -12,10 +12,12 @@ import {
   YAxis,
 } from "recharts";
 import { useStats, useStatus } from "@/lib/api/hooks";
+import { Skeleton } from "@/components/ui/skeleton";
 import { pivotStats } from "@/lib/chart";
 import { ALERT_THRESHOLD } from "@/lib/config";
 import { useDashboardUi } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { PanelState } from "./panel-state";
 
 // 아티팩트 목업과 동일한 서비스별 색.
 const SERIES_COLOR: Record<string, string> = {
@@ -75,11 +77,14 @@ export function TrendChart() {
 
       <div className="p-[15px]">
         <div className="h-64 w-full">
-          {rows.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-[11.5px] text-ink-muted">
-              최근 {rangeLabel(rangeMinutes)} 동안 보고된 에러가 없습니다.
-            </div>
-          ) : (
+          <PanelState
+            isError={stats.isError}
+            error={stats.error}
+            hasData={stats.data !== undefined}
+            isEmpty={rows.length === 0}
+            emptyText={`최근 ${rangeLabel(rangeMinutes)} 동안 보고된 에러가 없습니다.`}
+            skeleton={<Skeleton className="h-full w-full" />}
+          >
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={rows} margin={{ top: 10, right: 14, bottom: 0, left: -8 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e3e6eb" vertical={false} />
@@ -147,7 +152,7 @@ export function TrendChart() {
                   ))}
               </LineChart>
             </ResponsiveContainer>
-          )}
+          </PanelState>
         </div>
       </div>
     </section>

@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useAlerts, useStats, useStatus } from "@/lib/api/hooks";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useDashboardUi } from "@/lib/store";
 import { alertCounts, cooldownServiceCount, recentErrorCount } from "@/lib/tiles";
@@ -46,6 +47,15 @@ function Tile({
   );
 }
 
+function SkeletonTile() {
+  return (
+    <div className="rounded-[10px] border border-border bg-surface p-[15px] shadow-card">
+      <Skeleton className="h-3 w-20" />
+      <Skeleton className="mt-3 h-7 w-12" />
+    </div>
+  );
+}
+
 export function StatTiles() {
   const service = useDashboardUi((s) => s.service);
   const rangeMinutes = useDashboardUi((s) => s.rangeMinutes);
@@ -61,40 +71,62 @@ export function StatTiles() {
     .filter((s) => s.cooldownActive)
     .map((s) => s.service);
 
+  // 어느 쿼리도 데이터를 못 받은 첫 로드
+  const firstLoad =
+    stats.data === undefined && status.data === undefined && alerts.data === undefined;
+  // 셋 다 실패 → 요약 스트립을 에러로 (일부만 실패면 받은 값으로 채운다)
+  const allError = stats.isError && status.isError && alerts.isError;
+
   return (
     <section aria-labelledby="tiles-heading" className="mt-3">
       <h2 id="tiles-heading" className="sr-only">
         요약
       </h2>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Tile label={`최근 ${rangeLabel(rangeMinutes)} 에러`} value={errors} />
 
-        <Tile
-          label="최근 24시간 알림"
-          value={dispatched}
-          sub={
-            <>
-              <span className={failed > 0 ? "font-semibold text-crit" : undefined}>
-                실패 {failed}
-              </span>{" "}
-              &middot; dispatched {dispatched}
-            </>
-          }
-        />
+      {allError ? (
+        <div
+          role="alert"
+          className="rounded-[10px] border border-border bg-surface px-[15px] py-3 text-[11.5px] text-crit shadow-card"
+        >
+          요약 지표를 불러오지 못했습니다.
+        </div>
+      ) : firstLoad ? (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <SkeletonTile key={i} />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Tile label={`최근 ${rangeLabel(rangeMinutes)} 에러`} value={errors} />
 
-        <Tile
-          label="cooldown 중 서비스"
-          value={cooling}
-          crit={cooling > 0}
-          sub={coolingNames.length > 0 ? coolingNames.slice(0, 3).join(" · ") : undefined}
-        />
+          <Tile
+            label="최근 24시간 알림"
+            value={dispatched}
+            sub={
+              <>
+                <span className={failed > 0 ? "font-semibold text-crit" : undefined}>
+                  실패 {failed}
+                </span>{" "}
+                &middot; dispatched {dispatched}
+              </>
+            }
+          />
 
-        <Tile
-          label="수집→알림 p95"
-          value={<span className="text-ink-faint">&mdash;</span>}
-          sub="이후 편에서"
-        />
-      </div>
+          <Tile
+            label="cooldown 중 서비스"
+            value={cooling}
+            crit={cooling > 0}
+            sub={coolingNames.length > 0 ? coolingNames.slice(0, 3).join(" · ") : undefined}
+          />
+
+          <Tile
+            label="수집→알림 p95"
+            value={<span className="text-ink-faint">&mdash;</span>}
+            sub="이후 편에서"
+          />
+        </div>
+      )}
     </section>
   );
 }

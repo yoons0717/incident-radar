@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAlerts } from "@/lib/api/hooks";
+import { Skeleton } from "@/components/ui/skeleton";
 import { alertRow, latestAlertLabel } from "@/lib/alerts-table";
 import { cn } from "@/lib/utils";
+import { PanelState } from "./panel-state";
 
 const COLS = ["시각", "서비스", "상태", "창 카운트", "시도", "상세"];
 
@@ -38,11 +40,20 @@ export function AlertsTable() {
       </div>
 
       <div className="px-[3px] py-[6px]">
-        {rows.length === 0 ? (
-          <div className="py-[34px] text-center text-[11.5px] text-ink-muted">
-            최근 24시간 알림이 없습니다.
-          </div>
-        ) : (
+        <PanelState
+          isError={alerts.isError}
+          error={alerts.error}
+          hasData={alerts.data !== undefined}
+          isEmpty={rows.length === 0}
+          emptyText="최근 24시간 알림이 없습니다."
+          skeleton={
+            <div className="space-y-2 px-3 py-2">
+              {[0, 1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-9" />
+              ))}
+            </div>
+          }
+        >
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-[12.5px]">
               <thead>
@@ -104,7 +115,7 @@ export function AlertsTable() {
               </tbody>
             </table>
           </div>
-        )}
+        </PanelState>
       </div>
     </section>
   );

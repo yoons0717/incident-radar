@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useStatus } from "@/lib/api/hooks";
+import { Skeleton } from "@/components/ui/skeleton";
 import { COOLDOWN_SEC } from "@/lib/config";
 import { cooldownRows } from "@/lib/cooldown";
 import { cn } from "@/lib/utils";
+import { PanelState } from "./panel-state";
 
 function fmtMMSS(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -32,12 +34,21 @@ export function CooldownPanel() {
       </div>
 
       <div className="px-[15px] py-[6px]">
-        {rows.length === 0 ? (
-          <div className="py-[34px] text-center text-[11.5px] text-ink-muted">
-            최근 24시간에 활동한 서비스가 없습니다.
-          </div>
-        ) : (
-          rows.map((r) => (
+        <PanelState
+          isError={status.isError}
+          error={status.error}
+          hasData={status.data !== undefined}
+          isEmpty={rows.length === 0}
+          emptyText="최근 24시간에 활동한 서비스가 없습니다."
+          skeleton={
+            <div className="space-y-3 py-2">
+              {[0, 1, 2].map((i) => (
+                <Skeleton key={i} className="h-8" />
+              ))}
+            </div>
+          }
+        >
+          {rows.map((r) => (
             <div key={r.service} className="border-b border-border py-[11px] last:border-0">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[12px] font-medium">{r.service}</span>
@@ -65,8 +76,8 @@ export function CooldownPanel() {
                 </div>
               )}
             </div>
-          ))
-        )}
+          ))}
+        </PanelState>
       </div>
     </section>
   );
