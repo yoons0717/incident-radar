@@ -52,7 +52,7 @@ export function StatTiles() {
 
   const stats = useStats({ service, rangeMinutes });
   const status = useStatus();
-  const alerts = useAlerts(200);
+  const alerts = useAlerts(100);
 
   const errors = recentErrorCount(stats.data);
   const { dispatched, failed } = alertCounts(alerts.data, Date.now() - DAY_MS);

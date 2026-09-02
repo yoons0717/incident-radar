@@ -1,3 +1,4 @@
+import { AlertsTable } from "@/components/dashboard/alerts-table";
 import { CooldownPanel } from "@/components/dashboard/cooldown-panel";
 import { StatTiles } from "@/components/dashboard/stat-tiles";
 import { TopBar } from "@/components/dashboard/top-bar";
@@ -12,6 +13,7 @@ export default function Page() {
         <TrendChart />
         <CooldownPanel />
       </div>
+      <AlertsTable />
     </main>
   );
 }
