@@ -11,6 +11,10 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   const config = app.get(ConfigService<Env, true>);
+
+  // 대시보드(다른 포트)에서의 호출 허용. origin 은 env 로 명시 — 와일드카드 금지.
+  app.enableCors({ origin: config.get("CORS_ORIGIN", { infer: true }) });
+
   const port = config.get("PORT", { infer: true });
 
   await app.listen(port);

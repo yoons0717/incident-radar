@@ -15,6 +15,8 @@ export const envSchema = z.object({
   ALERT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   ALERT_THRESHOLD: z.coerce.number().int().positive().default(10),
   ALERT_COOLDOWN_SEC: z.coerce.number().int().positive().default(300),
+  // 브라우저에서 대시보드가 API 를 부르려면 필요. 콤마 목록·헤더 세부는 T20 에서.
+  CORS_ORIGIN: z.string().url().default("http://localhost:3001"),
   // 비우면(또는 미설정) 워커가 webhook 대신 구조화 로그로 대체.
   WEBHOOK_URL: z.preprocess(
     (v) => (v === "" ? undefined : v),
