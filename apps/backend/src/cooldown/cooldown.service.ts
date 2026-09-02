@@ -30,4 +30,13 @@ export class CooldownService {
     );
     return res === "OK";
   }
+
+  /**
+   * cooldown 이 활성이면 남은 TTL(초), 아니면 null. 읽기 전용 — 락을 만들지 않는다.
+   * TTL: -2(키 없음) / -1(만료 없음, 이 서비스에선 안 나옴) → null 로 취급.
+   */
+  async getTtl(service: string): Promise<number | null> {
+    const ttl = await this.redis.client.ttl(`cooldown:${service}`);
+    return ttl > 0 ? ttl : null;
+  }
 }

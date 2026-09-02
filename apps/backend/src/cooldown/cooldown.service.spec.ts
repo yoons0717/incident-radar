@@ -41,4 +41,23 @@ describe("CooldownService", () => {
     await cooldown.tryAcquire("checkout");
     expect(await cooldown.tryAcquire("auth")).toBe(true);
   });
+
+  describe("getTtl", () => {
+    it("cooldown 키가 없으면 null 을 반환한다", async () => {
+      const cooldown = makeCooldown(300);
+      expect(await cooldown.getTtl("checkout")).toBeNull();
+    });
+
+    it("cooldown 이 살아있으면 남은 초(양수)를 반환한다 — 획득 부작용 없음", async () => {
+      const cooldown = makeCooldown(300);
+      await cooldown.tryAcquire("checkout");
+
+      const ttl = await cooldown.getTtl("checkout");
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(300);
+
+      // 읽기만 했으므로 락은 그대로 — 2차 획득은 여전히 실패
+      expect(await cooldown.tryAcquire("checkout")).toBe(false);
+    });
+  });
 });
