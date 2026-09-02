@@ -69,6 +69,10 @@
 
 ### Phase 5 — Redis 장애 fallback
 
+> **순서 조정(2026-09-02):** T14 완료·커밋(`1fefb18`). **T15 는 Phase 8(프론트) 이후로
+> 미룸** — `/health` degraded 는 다운스트림을 막지 않고 Phase 9 통합에서야 필요.
+> 실제 순서: `14 → 16 → 22~27 → 15 → 17~21 → 28`. 근거는 맨 아래 "실행 중 조정".
+
 | # | 태스크 | 핵심 할 일 → 검증 | 개념 |
 |---|---|---|---|
 | 14 | 헬스 플래그 + `DbCountCounter` + 경로 선택 | `RedisHealthService`: 5초 PING + 커맨드 에러 훅 → `healthy`; `DbCountCounter`: `error_logs` `created_at > now()-interval` COUNT; `CounterSelector`: `healthy` 면 Redis 아니면 DB; `healthy=false`+임계값 초과 시 enqueue skip + `alert suppressed: redis down` 로그(스펙 4.5); 유닛: 플래그별 라우팅 → `test -- selector` 통과; redis stop 후 시뮬레이터 지속 → `path:"db-fallback"` 로그, POST 여전히 201 | graceful degradation, fail-open vs fail-close(알림 시스템은 fail-open), 이 규모엔 플래그로 충분·풀 서킷브레이커 과함 |
@@ -141,3 +145,15 @@
   불필요 → T5 마이그레이션에서 뺌. TypeORM 이 이 함수를 쓰게 하려면 DataSource·
   TypeOrmModule 에 `uuidExtension: "pgcrypto"` (확장 설치가 아니라 함수 선택 옵션).
   dev 인프라(`docker-compose.yml` pg16+redis7)를 T5 에 편입(풀스택 서비스는 T28).
+- **실행 중 조정 — Phase 순서 재배치(2026-09-02):** T14 완료 후, **T15 + Phase 7(17~21)
+  을 Phase 8(프론트, 22~27) 뒤로 미룸**. 실제 진행 순서 `14 → 16 → 22~27 → 15 → 17~21 → 28`.
+  - T16 이 프론트의 실질 전제조건: Phase 8 태스크가 전부 `/stats`·`/status`·`/alerts` 에
+    바인딩됨. "16 → 8" 은 플랜 자체의 의존성 순서.
+  - T15(`/health` degraded)는 다운스트림을 막지 않음 — LB/오케스트레이터용 신호라
+    실제 필요 시점은 Phase 9 통합. Phase 6 앞이 아니라 Phase 9 옆이 자연스러움.
+  - Phase 7 은 전부 운영·문서 마감(CI·Swagger·pino·보안·README). 화면 동작의 전제 아님.
+    T19 pino 는 "앞서 심은 커스텀 로그 정리"라 새 기능이 아니라 청소.
+  - 감수: 프론트 작업 중 백엔드는 애드혹 로그 포맷 + `/health` degraded 없음(프론트
+    무관). T19 때 T13·T14 가 넣은 로그 줄 재수정 발생 — 작고 예상된 비용.
+  - 동기: 백엔드 연속 작업 뒤 T16→프론트 6태스크를 몰아 하며 전체 그림을 다시 잡는
+    편이 이해·진행에 낫다는 판단.
