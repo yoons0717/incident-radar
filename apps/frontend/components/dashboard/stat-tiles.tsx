@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useAlerts, useStats, useStatus } from "@/lib/api/hooks";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { useDashboardUi } from "@/lib/store";
 import { alertCounts, cooldownServiceCount, recentErrorCount } from "@/lib/tiles";
 
@@ -12,14 +12,37 @@ function rangeLabel(rangeMinutes: number): string {
   return rangeMinutes >= 60 ? `${rangeMinutes / 60}시간` : `${rangeMinutes}분`;
 }
 
-function Tile({ title, children }: { title: string; children: ReactNode }) {
+function Tile({
+  label,
+  value,
+  sub,
+  crit,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  crit?: boolean;
+}) {
   return (
-    <Card>
-      <CardHeader className="p-4 pb-1">
-        <CardTitle className="text-xs font-medium text-neutral-500">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="p-4 pt-0">{children}</CardContent>
-    </Card>
+    <div
+      className={cn(
+        "rounded-[10px] border bg-surface px-[15px] py-[14px] shadow-card",
+        crit ? "border-crit/40" : "border-border",
+      )}
+    >
+      <div className="mb-[9px] text-[10.5px] font-semibold uppercase tracking-[0.07em] text-ink-faint">
+        {label}
+      </div>
+      <div
+        className={cn(
+          "font-mono text-[27px] font-medium leading-none tracking-[-0.02em] tabular-nums",
+          crit && "text-crit",
+        )}
+      >
+        {value}
+      </div>
+      {sub != null && <div className="mt-[7px] text-[11.5px] text-ink-muted">{sub}</div>}
+    </div>
   );
 }
 
@@ -34,33 +57,43 @@ export function StatTiles() {
   const errors = recentErrorCount(stats.data);
   const { dispatched, failed } = alertCounts(alerts.data, Date.now() - DAY_MS);
   const cooling = cooldownServiceCount(status.data);
+  const coolingNames = (status.data ?? [])
+    .filter((s) => s.cooldownActive)
+    .map((s) => s.service);
 
   return (
-    <section aria-labelledby="tiles-heading" className="mt-6">
+    <section aria-labelledby="tiles-heading" className="mt-3">
       <h2 id="tiles-heading" className="sr-only">
         요약
       </h2>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Tile title={`최근 ${rangeLabel(rangeMinutes)} 에러`}>
-          <span className="text-2xl font-semibold tabular-nums">{errors}</span>
-        </Tile>
+        <Tile label={`최근 ${rangeLabel(rangeMinutes)} 에러`} value={errors} />
 
-        <Tile title="최근 24시간 알림">
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-semibold tabular-nums">{dispatched}</span>
-            <span className="rounded bg-rose-100 px-1.5 py-0.5 text-xs font-medium text-rose-700">
-              실패 {failed}
-            </span>
-          </div>
-        </Tile>
+        <Tile
+          label="최근 24시간 알림"
+          value={dispatched}
+          sub={
+            <>
+              <span className={failed > 0 ? "font-semibold text-crit" : undefined}>
+                실패 {failed}
+              </span>{" "}
+              &middot; dispatched {dispatched}
+            </>
+          }
+        />
 
-        <Tile title="cooldown 중 서비스">
-          <span className="text-2xl font-semibold tabular-nums">{cooling}</span>
-        </Tile>
+        <Tile
+          label="cooldown 중 서비스"
+          value={cooling}
+          crit={cooling > 0}
+          sub={coolingNames.length > 0 ? coolingNames.slice(0, 3).join(" · ") : undefined}
+        />
 
-        <Tile title="수집→알림 p95">
-          <span className="text-sm text-neutral-400">이후 편에서</span>
-        </Tile>
+        <Tile
+          label="수집→알림 p95"
+          value={<span className="text-ink-faint">&mdash;</span>}
+          sub="이후 편에서"
+        />
       </div>
     </section>
   );

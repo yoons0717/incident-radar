@@ -1,1 +1,45 @@
 @import "tailwindcss";
+
+/* 아티팩트(개요 대시보드 목업)의 디자인 토큰. 라이트만 — 다크는 이후. */
+@theme {
+  --color-ground: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-surface-2: #fafbfc;
+  --color-ink: #191d24;
+  --color-ink-muted: #59616e;
+  --color-ink-faint: #8b93a1;
+  --color-border: #e3e6eb;
+  --color-border-strong: #d0d5dd;
+  --color-accent: #2f6ea5;
+  --color-ok: #3f8f5f;
+  --color-ok-soft: #e6f2ea;
+  --color-warn: #c0851f;
+  --color-warn-soft: #f8efdd;
+  --color-crit: #c14338;
+  --color-crit-soft: #f8e6e4;
+
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+
+  --font-sans: var(--font-plex-sans), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+body {
+  background: var(--color-ground);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 폴링 인디케이터의 맥동 링 */
+@keyframes poll-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-ok) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}

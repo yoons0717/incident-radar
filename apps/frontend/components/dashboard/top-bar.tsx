@@ -16,20 +16,21 @@ export function TopBar() {
   const fetching = useIsFetching() > 0;
 
   return (
-    <header className="flex items-center justify-between gap-4 border-b border-neutral-200 pb-4">
-      <div className="flex items-center gap-2">
-        <h1 className="text-lg font-semibold">Incident Radar</h1>
-        <span
-          role="status"
-          aria-label={fetching ? "새로고침 중" : "대기 중"}
-          className={cn(
-            "inline-block h-2 w-2 rounded-full transition-colors",
-            fetching ? "animate-pulse bg-emerald-500" : "bg-neutral-300",
-          )}
-        />
+    <header className="flex flex-wrap items-center gap-4 border-b border-border pb-[18px]">
+      <div className="flex items-baseline gap-2.5">
+        <h1 className="text-[17px] font-semibold tracking-[-0.01em]">Incident Radar</h1>
+        <span className="text-[10.5px] font-medium uppercase tracking-[0.09em] text-ink-faint">
+          Overview
+        </span>
       </div>
 
-      <div role="group" aria-label="시간 범위" className="flex gap-1">
+      <div className="flex-1" />
+
+      <div
+        role="group"
+        aria-label="시간 범위"
+        className="flex gap-0.5 rounded-[9px] border border-border bg-surface-2 p-[3px]"
+      >
         {RANGES.map((r) => (
           <button
             key={r.value}
@@ -37,16 +38,25 @@ export function TopBar() {
             onClick={() => setRange(r.value)}
             aria-pressed={rangeMinutes === r.value}
             className={cn(
-              "rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400",
+              "rounded-md px-3 py-[5px] text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
               rangeMinutes === r.value
-                ? "bg-neutral-900 text-neutral-50"
-                : "text-neutral-600 hover:bg-neutral-100",
+                ? "bg-surface text-ink shadow-card"
+                : "text-ink-muted hover:text-ink",
             )}
           >
             {r.label}
           </button>
         ))}
       </div>
+
+      <span className="inline-flex items-center gap-1.5 text-[11.5px] text-ink-muted">
+        <span
+          role="status"
+          aria-label={fetching ? "새로고침 중" : "대기 중"}
+          className="h-1.5 w-1.5 rounded-full bg-ok [animation:poll-pulse_2.4s_ease-out_infinite] motion-reduce:[animation:none]"
+        />
+        실시간
+      </span>
     </header>
   );
 }
