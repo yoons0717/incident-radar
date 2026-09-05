@@ -15,7 +15,7 @@ import { useStats, useStatus } from "@/lib/api/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { pivotStats } from "@/lib/chart";
 import { ALERT_THRESHOLD } from "@/lib/config";
-import { useDashboardUi } from "@/lib/store";
+import { rangeLabel, useDashboardUi } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { PanelState } from "./panel-state";
 
@@ -157,10 +157,6 @@ export function TrendChart() {
       </div>
     </section>
   );
-}
-
-function rangeLabel(rangeMinutes: number): string {
-  return rangeMinutes >= 60 ? `${rangeMinutes / 60}시간` : `${rangeMinutes}분`;
 }
 
 function FilterButton({

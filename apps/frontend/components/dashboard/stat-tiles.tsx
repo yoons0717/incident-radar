@@ -4,14 +4,10 @@ import type { ReactNode } from "react";
 import { useAlerts, useStats, useStatus } from "@/lib/api/hooks";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { useDashboardUi } from "@/lib/store";
+import { rangeLabel, useDashboardUi } from "@/lib/store";
 import { alertCounts, cooldownServiceCount, recentErrorCount } from "@/lib/tiles";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-function rangeLabel(rangeMinutes: number): string {
-  return rangeMinutes >= 60 ? `${rangeMinutes / 60}시간` : `${rangeMinutes}분`;
-}
 
 function Tile({
   label,
