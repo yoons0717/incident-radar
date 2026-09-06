@@ -38,8 +38,11 @@ export class DashboardService {
 
   /** GET /stats — 에러 수를 bucket 초 간격으로 버킷팅한 서비스별 시계열. */
   async stats(q: StatsQuery): Promise<StatsResponse> {
-    const to = q.to ? new Date(q.to) : new Date();
-    const from = q.from ? new Date(q.from) : new Date(to.getTime() - DEFAULT_RANGE_MS);
+    // `to` 생략(기본 = 지금까지)이면 상한을 아예 안 건다. `new Date()`(ms 정밀도)를
+    // DB timestamptz(마이크로초 정밀도)와 비교하면, 쿼리 직전에 쓰인 행이 근소한
+    // 정밀도 차이로 `< to` 에서 빠질 수 있다(레이스) — "지금 존재하는 건 다 포함"이 맞기도 하다.
+    const to = q.to ? new Date(q.to) : null;
+    const from = q.from ? new Date(q.from) : new Date((to ?? new Date()).getTime() - DEFAULT_RANGE_MS);
     // ponytail: bucket 은 스키마에서 10~3600 정수로 클램프됨 → SQL 에 인라인해도 안전(주입 아님).
     const bucket = q.bucket;
 
@@ -51,12 +54,13 @@ export class DashboardService {
         "t",
       )
       .addSelect("count(*)", "count")
-      .where("e.created_at >= :from AND e.created_at < :to", { from, to })
+      .where("e.created_at >= :from", { from })
       .groupBy("e.service")
       .addGroupBy("t")
       .orderBy("e.service")
       .addOrderBy("t");
 
+    if (to) qb.andWhere("e.created_at < :to", { to });
     if (q.service) qb.andWhere("e.service = :service", { service: q.service });
 
     const rows = await qb.getRawMany<{ service: string; t: Date; count: string }>();

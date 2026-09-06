@@ -100,6 +100,18 @@ describe("DashboardService", () => {
       expect(res).toHaveLength(1);
       expect(res[0]!.buckets.reduce((n, b) => n + b.count, 0)).toBe(1);
     });
+
+    it("to 를 생략하면 상한을 안 걸어 방금 쓰인 행도 포함한다", async () => {
+      // 회귀: to 기본값이 new Date()(호출 시각, ms 정밀도)였을 때, DB timestamptz(마이크로초)가
+      // 그보다 미세하게 앞선 행은 `< to` 에서 빠졌다(레이스 — e2e 버스트 테스트에서 실제로 재현됨).
+      // 지금 존재하는 행이 호출 시각보다 "미래"인 걸로 세팅해도 새 코드는 여전히 잡아야 한다
+      // (to 생략 시 상한 자체를 안 거므로) — 옛 코드였다면 확실히 빠졌을 값으로 검증.
+      await seedError("checkout", new Date(Date.now() + 5_000));
+
+      const res = await makeService().stats({ bucket: 60, from: new Date(T0).toISOString() });
+
+      expect(res.find((s) => s.service === "checkout")?.buckets.reduce((n, b) => n + b.count, 0)).toBe(1);
+    });
   });
 
   describe("status", () => {
