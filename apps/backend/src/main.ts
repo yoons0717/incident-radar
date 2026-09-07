@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import { SwaggerModule } from "@nestjs/swagger";
+import helmet from "helmet";
 import { Logger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import type { Env } from "./config/env.schema";
@@ -12,6 +13,7 @@ async function bootstrap() {
   // 유실되지 않고 버퍼링됐다가 붙는 순간 한꺼번에 플러시된다.
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
+  app.use(helmet());
 
   // SIGTERM/SIGINT 시 onModuleDestroy 훅이 돌아 DB·Redis·큐 연결을 정리한다.
   app.enableShutdownHooks();

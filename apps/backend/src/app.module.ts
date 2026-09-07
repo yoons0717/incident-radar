@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
+import { ThrottlerModule } from "@nestjs/throttler";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { LoggerModule } from "nestjs-pino";
 import { validateEnv, type Env } from "./config/env.schema";
@@ -45,6 +46,16 @@ import { RedisModule } from "./redis/redis.module";
                   },
                 },
         },
+      }),
+    }),
+    // POST /errors 전용 IP 레이트리밋(가드는 ErrorsController 에서만 붙임).
+    // X-Load-Test 헤더가 있으면 우회 — 시뮬레이터·부하테스트 트래픽용.
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>) => ({
+        throttlers: [{ ttl: 60_000, limit: config.get("RATE_LIMIT_PER_MIN", { infer: true }) }],
+        skipIf: (context) =>
+          context.switchToHttp().getRequest().headers["x-load-test"] !== undefined,
       }),
     }),
     TypeOrmModule.forRootAsync({
