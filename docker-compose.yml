@@ -1,4 +1,4 @@
-# 로컬 개발용 인프라. backend/frontend 서비스는 T28에서 추가한다.
+# 로컬 개발용 인프라 + 풀스택 데모(backend/frontend).
 services:
   postgres:
     image: postgres:16-alpine
@@ -26,6 +26,39 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    env_file: .env
+    environment:
+      # .env 는 로컬 개발용(NODE_ENV=development, host 기준 localhost) 값이라 컨테이너에선 덮어쓴다.
+      NODE_ENV: production
+      DATABASE_URL: postgres://ir:ir@postgres:5432/incident_radar
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+      args:
+        # 브라우저에서 직접 호출하는 주소라 호스트 매핑 포트(localhost:3000) 그대로 사용.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+    env_file: .env
+    environment:
+      NODE_ENV: production
+    ports:
+      - "3001:3001"
+    depends_on:
+      - backend
 
 volumes:
   pgdata:

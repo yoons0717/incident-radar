@@ -27,3 +27,6 @@ coverage/
 
 # serena MCP (로컬 인덱스·프로젝트 설정)
 .serena/
+
+# Playwright MCP 캡처 부산물
+.playwright-mcp/
