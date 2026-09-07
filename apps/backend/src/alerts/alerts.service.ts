@@ -27,7 +27,7 @@ export class AlertsService {
     this.webhookUrl = config.get("WEBHOOK_URL", { infer: true });
   }
 
-  /** 임계값+cooldown 통과 시 detector 가 호출. 재시도 5회·지수 백오프(1·2·4·8·16초)+지터. */
+  /** 임계값+cooldown 통과 시 detector 가 호출. 재시도 5회(간격 1·2·4·8초, 지수)+지터. */
   async enqueue(data: AlertJobData): Promise<void> {
     await this.queue.add("dispatch", data, {
       attempts: 5,
