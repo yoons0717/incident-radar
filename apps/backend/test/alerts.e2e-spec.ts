@@ -5,6 +5,7 @@ import { AppModule } from "../src/app.module";
 import { AlertFailure } from "../src/db/entities/alert-failure.entity";
 import { Alert } from "../src/db/entities/alert.entity";
 import { testDataSource } from "./db";
+import { sleep, waitFor } from "./helpers";
 
 describe("alerts pipeline (e2e)", () => {
   let app: INestApplication;
@@ -47,16 +48,3 @@ describe("alerts pipeline (e2e)", () => {
     expect(await alertRepo().count()).toBe(1);
   }, 30_000);
 });
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-async function waitFor(cond: () => Promise<boolean>, timeoutMs: number): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await cond()) return;
-    await sleep(100);
-  }
-  throw new Error(`waitFor timeout after ${timeoutMs}ms`);
-}
