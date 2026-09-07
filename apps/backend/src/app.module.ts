@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
+import { LoggerModule } from "nestjs-pino";
 import { validateEnv, type Env } from "./config/env.schema";
 import { CooldownModule } from "./cooldown/cooldown.module";
 import { CounterModule } from "./counter/counter.module";
@@ -17,6 +18,34 @@ import { RedisModule } from "./redis/redis.module";
       // 로컬 .env 를 먼저, 없으면 모노레포 루트 .env 를 읽는다.
       envFilePath: [".env", "../../.env"],
       validate: validateEnv,
+    }),
+    // dev 는 pino-pretty 로 사람이 읽기 좋게, prod 는 순수 JSON 한 줄(로그 수집기가 파싱).
+    LoggerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>) => ({
+        pinoHttp: {
+          // 테스트는 supertest 가 초당 수십 번 찌르는 실제 트래픽이 아니라 access log 로
+          // 남길 가치가 없고, 테스트 실행마다 요청/응답 통째로 찍히면 실패만 눈에 안 띈다.
+          autoLogging: config.get("NODE_ENV", { infer: true }) !== "test",
+          // 기본 직렬화는 헤더까지 통째로 찍어 한 줄이 너무 길어진다 — 필요한 것만.
+          serializers: {
+            req: (req: { method: string; url: string }) => ({ method: req.method, url: req.url }),
+            res: (res: { statusCode: number }) => ({ statusCode: res.statusCode }),
+          },
+          transport:
+            config.get("NODE_ENV", { infer: true }) === "production"
+              ? undefined
+              : {
+                  target: "pino-pretty",
+                  options: {
+                    singleLine: true,
+                    translateTime: "HH:MM:ss",
+                    ignore: "pid,hostname,context",
+                    messageFormat: "{context}: {msg}",
+                  },
+                },
+        },
+      }),
     }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],

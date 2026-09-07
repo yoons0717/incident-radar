@@ -2,12 +2,16 @@ import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import { SwaggerModule } from "@nestjs/swagger";
+import { Logger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import type { Env } from "./config/env.schema";
 import { buildOpenApiDocument } from "./openapi/openapi.document";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // bufferLogs: true — useLogger 로 pino 를 붙이기 전(모듈 초기화 중) 로그가
+  // 유실되지 않고 버퍼링됐다가 붙는 순간 한꺼번에 플러시된다.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger));
 
   // SIGTERM/SIGINT 시 onModuleDestroy 훅이 돌아 DB·Redis·큐 연결을 정리한다.
   app.enableShutdownHooks();
@@ -23,7 +27,7 @@ async function bootstrap() {
   const port = config.get("PORT", { infer: true });
 
   await app.listen(port);
-  console.log(`backend listening on :${port}`);
+  app.get(Logger).log(`backend listening on :${port}`, "Bootstrap");
 }
 
 void bootstrap();
