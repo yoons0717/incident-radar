@@ -4,7 +4,7 @@ import { Alert as AlertSchema, ErrorLog as ErrorLogSchema, ServiceStatus, StatsR
 import request from "supertest";
 import { z } from "zod";
 import { AppModule } from "../src/app.module";
-import { TEST_BEARER } from "./auth";
+import { loginAgent, TEST_BEARER } from "./auth";
 import { AlertFailure } from "../src/db/entities/alert-failure.entity";
 import { Alert } from "../src/db/entities/alert.entity";
 import { testDataSource } from "./db";
@@ -40,24 +40,27 @@ describe("dashboard endpoints (e2e)", () => {
     expect(await alertRepo().count()).toBe(1);
     expect(await failureRepo().count()).toBe(0);
 
-    const errs = await http().get("/errors?service=checkout").expect(200);
+    // 조회 라우트는 로그인 필수 → 세션 agent 로 호출
+    const agent = await loginAgent(app);
+
+    const errs = await agent.get("/errors?service=checkout").expect(200);
     expect(z.array(ErrorLogSchema).parse(errs.body)).toHaveLength(15);
 
-    const stats = await http().get("/stats?service=checkout&bucket=60").expect(200);
+    const stats = await agent.get("/stats?service=checkout&bucket=60").expect(200);
     const parsedStats = StatsResponse.parse(stats.body);
     const total = parsedStats
       .flatMap((s) => s.buckets)
       .reduce((n, b) => n + b.count, 0);
     expect(total).toBe(15);
 
-    const status = await http().get("/status").expect(200);
+    const status = await agent.get("/status").expect(200);
     const parsedStatus = z.array(ServiceStatus).parse(status.body);
     const checkout = parsedStatus.find((s) => s.service === "checkout");
     expect(checkout?.cooldownActive).toBe(true);
     expect(checkout?.cooldownTtlSec).toBeGreaterThan(0);
     expect(checkout?.windowCount).toBeGreaterThanOrEqual(11);
 
-    const alerts = await http().get("/alerts").expect(200);
+    const alerts = await agent.get("/alerts").expect(200);
     const parsedAlerts = z.array(AlertSchema).parse(alerts.body);
     expect(parsedAlerts).toHaveLength(1);
     expect(parsedAlerts[0]?.status).toBe("dispatched");

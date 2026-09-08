@@ -2,6 +2,7 @@ import { Body, Controller, Get, Post, Query, UseGuards } from "@nestjs/common";
 import { ThrottlerGuard } from "@nestjs/throttler";
 import { ErrorLogInput } from "@incident-radar/shared";
 import { ApiKeyGuard } from "../api-key/api-key.guard";
+import { SessionGuard } from "../auth/session.guard";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { DetectorService } from "../detector/detector.service";
 import { ErrorsQuery } from "./errors.schema";
@@ -26,8 +27,9 @@ export class ErrorsController {
     return saved;
   }
 
-  /** GET /errors?service=&from=&to=&limit= — 이력 조회 (created_at desc) */
+  /** GET /errors?service=&from=&to=&limit= — 이력 조회 (created_at desc). 로그인 필수. */
   @Get()
+  @UseGuards(SessionGuard)
   find(@Query(new ZodValidationPipe(ErrorsQuery)) query: ErrorsQuery) {
     return this.errors.find(query);
   }

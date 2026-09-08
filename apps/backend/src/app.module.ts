@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { LoggerModule } from "nestjs-pino";
+import { AuthModule } from "./auth/auth.module";
 import { validateEnv, type Env } from "./config/env.schema";
 import { CooldownModule } from "./cooldown/cooldown.module";
 import { CounterModule } from "./counter/counter.module";
@@ -11,6 +12,7 @@ import { entities } from "./db/entities";
 import { ErrorsModule } from "./errors/errors.module";
 import { HealthModule } from "./health/health.module";
 import { RedisModule } from "./redis/redis.module";
+import { SessionModule } from "./session/session.module";
 
 @Module({
   imports: [
@@ -68,6 +70,8 @@ import { RedisModule } from "./redis/redis.module";
       }),
     }),
     RedisModule,
+    SessionModule,
+    AuthModule,
     HealthModule,
     ErrorsModule,
     CounterModule,

@@ -7,9 +7,32 @@
 @base = http://localhost:3000
 # pnpm --filter backend seed:api-key manual 로 발급한 토큰을 붙인다.
 @apiKey = ir_REPLACE_ME
+# seed:admin 으로 만든 계정. REST Client 는 로그인 후 세션 쿠키를 자동으로 이어붙인다.
+@email = me@example.com
+@password = REPLACE_ME
 
 ### 헬스체크
 GET {{base}}/health
+
+### 로그인 → 200 + Set-Cookie (이후 조회 요청에 쿠키 자동 첨부)
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### 현재 사용자 → 200 (로그인 안 했으면 401)
+GET {{base}}/auth/me
+
+### API 키 발급 (admin 세션 필요) → 201 { id, name, token }
+POST {{base}}/api-keys
+Content-Type: application/json
+
+{
+  "name": "manual-test"
+}
 
 ### 에러 저장 (정상) → 201
 POST {{base}}/errors

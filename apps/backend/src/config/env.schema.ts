@@ -17,6 +17,11 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().url().default("http://localhost:3001"),
   // POST /errors 레이트리밋 (IP 기준, 분당). 부하테스트는 이 값을 올려서 한다.
   RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(600),
+  // 대시보드 로그인 세션 쿠키 서명 키. 최소 16자.
+  SESSION_SECRET: z.string().min(16),
+  // 관리자 계정 seed 용 (seed:admin CLI 에서만 읽음). 앱 부팅엔 불필요.
+  SEED_ADMIN_EMAIL: z.string().email().optional(),
+  SEED_ADMIN_PASSWORD: z.string().min(8).optional(),
   // 비우면(또는 미설정) 워커가 webhook 대신 구조화 로그로 대체.
   WEBHOOK_URL: z.preprocess(
     (v) => (v === "" ? undefined : v),

@@ -24,7 +24,8 @@ async function bootstrap() {
   const config = app.get(ConfigService<Env, true>);
 
   // 대시보드(다른 포트)에서의 호출 허용. origin 은 env 로 명시 — 와일드카드 금지.
-  app.enableCors({ origin: config.get("CORS_ORIGIN", { infer: true }) });
+  // credentials: 로그인 세션 쿠키를 크로스 오리진 fetch 로 주고받으려면 필수.
+  app.enableCors({ origin: config.get("CORS_ORIGIN", { infer: true }), credentials: true });
 
   const port = config.get("PORT", { infer: true });
 

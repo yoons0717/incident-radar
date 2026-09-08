@@ -10,6 +10,11 @@ describe("buildOpenApiDocument", () => {
 
     expect(Object.keys(doc.paths ?? {}).sort()).toEqual([
       "/alerts",
+      "/api-keys",
+      "/api-keys/{id}",
+      "/auth/login",
+      "/auth/logout",
+      "/auth/me",
       "/errors",
       "/health",
       "/stats",
@@ -18,16 +23,21 @@ describe("buildOpenApiDocument", () => {
     expect(doc.paths?.["/errors"]).toHaveProperty("post");
     expect(doc.paths?.["/errors"]).toHaveProperty("get");
 
-    // POST /errors 는 API 키(Bearer) 인증이 필요하다 — 문서에도 반영돼야 한다.
+    // POST /errors 는 API 키(Bearer), 조회 라우트는 세션 쿠키 — 문서에도 반영돼야 한다.
     expect(doc.components?.securitySchemes).toHaveProperty("bearerAuth");
+    expect(doc.components?.securitySchemes).toHaveProperty("cookieAuth");
     const postErrors = (doc.paths?.["/errors"] as { post: { security?: unknown } }).post;
     expect(postErrors.security).toEqual([{ bearerAuth: [] }]);
+    const getStatus = (doc.paths?.["/status"] as { get: { security?: unknown } }).get;
+    expect(getStatus.security).toEqual([{ cookieAuth: [] }]);
 
     expect(Object.keys(doc.components?.schemas ?? {}).sort()).toEqual([
       "Alert",
+      "CreateApiKeyInput",
       "ErrorLog",
       "ErrorLogInput",
       "HealthResult",
+      "LoginInput",
       "ServiceStatus",
       "StatsResponse",
     ]);
