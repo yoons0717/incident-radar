@@ -5,6 +5,8 @@
 # 먼저: docker compose up -d  &&  pnpm --filter backend migration:run  &&  pnpm --filter backend dev
 
 @base = http://localhost:3000
+# pnpm --filter backend seed:api-key manual 로 발급한 토큰을 붙인다.
+@apiKey = ir_REPLACE_ME
 
 ### 헬스체크
 GET {{base}}/health
@@ -12,15 +14,26 @@ GET {{base}}/health
 ### 에러 저장 (정상) → 201
 POST {{base}}/errors
 Content-Type: application/json
+Authorization: Bearer {{apiKey}}
 
 {
   "service": "checkout",
   "message": "payment gateway timeout"
 }
 
+### 에러 저장 (인증 없음) → 401
+POST {{base}}/errors
+Content-Type: application/json
+
+{
+  "service": "checkout",
+  "message": "no auth"
+}
+
 ### 에러 저장 (검증 실패: service 없음) → 400 + issues
 POST {{base}}/errors
 Content-Type: application/json
+Authorization: Bearer {{apiKey}}
 
 {
   "message": "no service field"
@@ -29,6 +42,7 @@ Content-Type: application/json
 ### 에러 저장 (검증 실패: message 8192 초과) → 400
 POST {{base}}/errors
 Content-Type: application/json
+Authorization: Bearer {{apiKey}}
 
 {
   "service": "checkout",

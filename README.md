@@ -108,6 +108,8 @@ pnpm --filter backend dev
 pnpm --filter frontend dev
 
 # 6) 데모 트래픽 (선택, 별도 터미널)
+#    POST /errors 는 API 키가 필요하다 — 하나 발급해서 export
+export SIM_API_KEY=$(pnpm --filter backend --silent seed:api-key sim)
 pnpm --filter @incident-radar/tools sim -- --spike checkout
 ```
 
@@ -123,9 +125,10 @@ VS Code REST Client / JetBrains용 요청 모음도 있다.
 # 헬스체크 — DB 다운이면 503, Redis만 다운이면 200 degraded
 curl http://localhost:3000/health
 
-# 에러 보고
+# 에러 보고 (API 키 필수 — pnpm --filter backend seed:api-key <이름> 으로 발급)
 curl -X POST http://localhost:3000/errors \
   -H "content-type: application/json" \
+  -H "authorization: Bearer $SIM_API_KEY" \
   -d '{"service":"checkout","message":"payment gateway timeout"}'
 
 # 이력 조회 (service 필수)
@@ -141,8 +144,10 @@ curl http://localhost:3000/status
 curl http://localhost:3000/alerts
 ```
 
-`POST /errors`는 IP 기준으로 분당 `RATE_LIMIT_PER_MIN`(기본 600)건까지만 받는다.
-시뮬레이터·부하테스트 트래픽은 `X-Load-Test` 헤더를 붙이면 이 제한을 건너뛴다.
+`POST /errors`는 `Authorization: Bearer <API 키>`가 필요하다. 키는
+`pnpm --filter backend seed:api-key <이름>`으로 발급하며 평문은 이때 한 번만 출력된다
+(DB에는 sha256 해시만 저장). 발급/폐기 API와 대시보드 인증은 다음 단계(로그인 세션)에서 붙인다.
+IP 기준 분당 `RATE_LIMIT_PER_MIN`(기본 600) 레이트리밋도 함께 걸린다 — 부하테스트는 이 값을 올려서 한다.
 
 ## 테스트
 

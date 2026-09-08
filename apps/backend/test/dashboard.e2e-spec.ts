@@ -4,6 +4,7 @@ import { Alert as AlertSchema, ErrorLog as ErrorLogSchema, ServiceStatus, StatsR
 import request from "supertest";
 import { z } from "zod";
 import { AppModule } from "../src/app.module";
+import { TEST_BEARER } from "./auth";
 import { AlertFailure } from "../src/db/entities/alert-failure.entity";
 import { Alert } from "../src/db/entities/alert.entity";
 import { testDataSource } from "./db";
@@ -28,7 +29,11 @@ describe("dashboard endpoints (e2e)", () => {
 
   it("버스트 → /stats·/status·/alerts 가 공유 스키마로 parse 되고 값이 맞다 (스펙 6절)", async () => {
     for (let i = 0; i < 15; i++) {
-      await http().post("/errors").send({ service: "checkout", message: "boom" }).expect(201);
+      await http()
+        .post("/errors")
+        .set("authorization", TEST_BEARER)
+        .send({ service: "checkout", message: "boom" })
+        .expect(201);
     }
     await waitFor(async () => (await alertRepo().count()) >= 1, 8000);
 

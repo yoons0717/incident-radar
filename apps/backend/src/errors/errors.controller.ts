@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from "@nestjs/common";
 import { ThrottlerGuard } from "@nestjs/throttler";
 import { ErrorLogInput } from "@incident-radar/shared";
+import { ApiKeyGuard } from "../api-key/api-key.guard";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { DetectorService } from "../detector/detector.service";
 import { ErrorsQuery } from "./errors.schema";
@@ -13,9 +14,9 @@ export class ErrorsController {
     private readonly detector: DetectorService,
   ) {}
 
-  /** POST /errors — 에러 로그 1건 저장 (Nest 는 POST 에 기본 201). 레이트리밋 대상. */
+  /** POST /errors — 에러 로그 1건 저장 (Nest 는 POST 에 기본 201). API 키 필수 + 레이트리밋 대상. */
   @Post()
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(ApiKeyGuard, ThrottlerGuard)
   async create(@Body(new ZodValidationPipe(ErrorLogInput)) body: ErrorLogInput) {
     const startedAt = Date.now(); // 수신~감지 종료 지연 측정 (detector 가 로그로 남김)
     const saved = await this.errors.create(body);

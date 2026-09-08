@@ -12,6 +12,7 @@
     "migration:run": "pnpm typeorm migration:run",
     "migration:revert": "pnpm typeorm migration:revert",
     "migration:generate": "pnpm typeorm migration:generate",
+    "seed:api-key": "ts-node src/api-key/seed.ts",
     "test": "node scripts/test.mjs",
     "test:unit": "jest --selectProjects unit",
     "test:e2e": "jest --selectProjects e2e",

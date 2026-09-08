@@ -24,6 +24,12 @@ const StatsResponseSchema = registry.register("StatsResponse", StatsResponse);
 const ServiceStatusSchema = registry.register("ServiceStatus", ServiceStatus);
 const AlertSchema = registry.register("Alert", Alert);
 
+// POST /errors 는 API 키(Authorization: Bearer <key>)로 인증한다.
+const bearerAuth = registry.registerComponent("securitySchemes", "bearerAuth", {
+  type: "http",
+  scheme: "bearer",
+});
+
 // /health 는 프론트가 안 써서 공유 스키마가 없다 — 문서 전용으로 여기서만 정의.
 const HealthResultSchema = registry.register(
   "HealthResult",
@@ -37,9 +43,11 @@ registry.registerPath({
   method: "post",
   path: "/errors",
   summary: "에러 로그 1건 저장",
+  security: [{ [bearerAuth.name]: [] }],
   request: { body: { content: { "application/json": { schema: ErrorLogInputSchema } } } },
   responses: {
     201: { description: "생성됨", content: { "application/json": { schema: ErrorLogSchema } } },
+    401: { description: "API 키 없음 또는 무효" },
   },
 });
 

@@ -49,13 +49,11 @@ import { RedisModule } from "./redis/redis.module";
       }),
     }),
     // POST /errors 전용 IP 레이트리밋(가드는 ErrorsController 에서만 붙임).
-    // X-Load-Test 헤더가 있으면 우회 — 시뮬레이터·부하테스트 트래픽용.
+    // 우회 헤더는 없다 — 수집은 API 키로 인증하고, 부하테스트는 RATE_LIMIT_PER_MIN 을 올려서 한다.
     ThrottlerModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>) => ({
         throttlers: [{ ttl: 60_000, limit: config.get("RATE_LIMIT_PER_MIN", { infer: true }) }],
-        skipIf: (context) =>
-          context.switchToHttp().getRequest().headers["x-load-test"] !== undefined,
       }),
     }),
     TypeOrmModule.forRootAsync({

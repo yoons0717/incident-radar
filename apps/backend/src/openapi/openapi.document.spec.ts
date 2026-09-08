@@ -18,6 +18,11 @@ describe("buildOpenApiDocument", () => {
     expect(doc.paths?.["/errors"]).toHaveProperty("post");
     expect(doc.paths?.["/errors"]).toHaveProperty("get");
 
+    // POST /errors 는 API 키(Bearer) 인증이 필요하다 — 문서에도 반영돼야 한다.
+    expect(doc.components?.securitySchemes).toHaveProperty("bearerAuth");
+    const postErrors = (doc.paths?.["/errors"] as { post: { security?: unknown } }).post;
+    expect(postErrors.security).toEqual([{ bearerAuth: [] }]);
+
     expect(Object.keys(doc.components?.schemas ?? {}).sort()).toEqual([
       "Alert",
       "ErrorLog",
