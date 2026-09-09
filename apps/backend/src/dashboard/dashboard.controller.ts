@@ -1,10 +1,12 @@
-import { Controller, Get, Query } from "@nestjs/common";
+import { Controller, Get, Query, UseGuards } from "@nestjs/common";
+import { SessionGuard } from "../auth/session.guard";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { AlertsQuery, StatsQuery } from "./dashboard.schema";
 import { DashboardService } from "./dashboard.service";
 
-/** 대시보드 3패널용 읽기 엔드포인트. 루트 경로에 /stats·/status·/alerts. */
+/** 대시보드 3패널용 읽기 엔드포인트. 루트 경로에 /stats·/status·/alerts. 로그인 필수. */
 @Controller()
+@UseGuards(SessionGuard)
 export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
 

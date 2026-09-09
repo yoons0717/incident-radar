@@ -3,6 +3,7 @@ import { Test } from "@nestjs/testing";
 import { ErrorLog } from "@incident-radar/shared";
 import request from "supertest";
 import { AppModule } from "../src/app.module";
+import { loginAgent, TEST_BEARER } from "./auth";
 
 describe("errors API (e2e)", () => {
   let app: INestApplication;
@@ -18,44 +19,46 @@ describe("errors API (e2e)", () => {
   });
 
   const http = () => request(app.getHttpServer());
+  // POST /errors 는 API 키 필수 → 모든 수집 요청에 고정 테스트 토큰을 붙인다.
+  const postErr = (body: object) =>
+    http().post("/errors").set("authorization", TEST_BEARER).send(body);
+  // GET /errors 는 로그인 필수 → 매 테스트마다 세션 agent 를 만든다.
+  let agent: Awaited<ReturnType<typeof loginAgent>>;
+  beforeEach(async () => {
+    agent = await loginAgent(app);
+  });
 
   it("POST 로 저장하고 GET 으로 되돌려 받는다 (응답이 ErrorLog 스키마와 일치)", async () => {
-    const created = await http()
-      .post("/errors")
-      .send({ service: "checkout", message: "payment timeout" })
-      .expect(201);
+    const created = await postErr({ service: "checkout", message: "payment timeout" }).expect(201);
 
     // 응답이 공유 스키마를 통과해야 한다 (Date → ISO 문자열 직렬화 포함)
     const parsed = ErrorLog.parse(created.body);
     expect(parsed.service).toBe("checkout");
 
-    const list = await http().get("/errors").query({ service: "checkout" }).expect(200);
+    const list = await agent.get("/errors").query({ service: "checkout" }).expect(200);
     const rows = list.body.map((r: unknown) => ErrorLog.parse(r));
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe(parsed.id);
   });
 
   it("service 가 없으면 400 + issues", async () => {
-    const res = await http().post("/errors").send({ message: "no service" }).expect(400);
+    const res = await postErr({ message: "no service" }).expect(400);
     expect(res.body.issues).toEqual(
       expect.arrayContaining([expect.objectContaining({ path: "service" })]),
     );
   });
 
   it("message 가 8192 를 넘으면 400", async () => {
-    await http()
-      .post("/errors")
-      .send({ service: "checkout", message: "a".repeat(8193) })
-      .expect(400);
+    await postErr({ service: "checkout", message: "a".repeat(8193) }).expect(400);
   });
 
   it("GET 에 service 가 없으면 400", async () => {
-    await http().get("/errors").expect(400);
+    await agent.get("/errors").expect(400);
   });
 
   it("limit 이 1000 을 넘어도 에러 없이 클램프된다", async () => {
-    await http().post("/errors").send({ service: "auth", message: "x" }).expect(201);
-    const res = await http().get("/errors").query({ service: "auth", limit: 5000 }).expect(200);
+    await postErr({ service: "auth", message: "x" }).expect(201);
+    const res = await agent.get("/errors").query({ service: "auth", limit: 5000 }).expect(200);
     expect(res.body).toHaveLength(1);
   });
 
@@ -68,11 +71,11 @@ describe("errors API (e2e)", () => {
 
     try {
       for (let i = 0; i < 10; i++) {
-        await http().post("/errors").send({ service: "payments", message: "boom" }).expect(201);
+        await postErr({ service: "payments", message: "boom" }).expect(201);
       }
       expect(exceeded()).toHaveLength(0);
 
-      await http().post("/errors").send({ service: "payments", message: "boom" }).expect(201);
+      await postErr({ service: "payments", message: "boom" }).expect(201);
       const hits = exceeded();
       expect(hits.length).toBeGreaterThanOrEqual(1);
       expect(String(hits[0]?.[0])).toContain("payments");
@@ -82,17 +85,14 @@ describe("errors API (e2e)", () => {
   });
 
   it("from/to 로 시간 범위를 거른다", async () => {
-    await http().post("/errors").send({ service: "search", message: "old-ish" }).expect(201);
+    await postErr({ service: "search", message: "old-ish" }).expect(201);
 
     const future = new Date(Date.now() + 60_000).toISOString();
-    const empty = await http()
-      .get("/errors")
-      .query({ service: "search", from: future })
-      .expect(200);
+    const empty = await agent.get("/errors").query({ service: "search", from: future }).expect(200);
     expect(empty.body).toHaveLength(0);
 
     const past = new Date(Date.now() - 60_000).toISOString();
-    const found = await http().get("/errors").query({ service: "search", from: past }).expect(200);
+    const found = await agent.get("/errors").query({ service: "search", from: past }).expect(200);
     expect(found.body).toHaveLength(1);
   });
 });

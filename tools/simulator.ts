@@ -33,6 +33,9 @@ const TOTAL_WEIGHT = SERVICES.reduce((s, x) => s + x.weight, 0);
 // ponytail: 백엔드 기본 ALERT_THRESHOLD=10 을 넘기려는 값. 임계값을 바꿨으면 여기도.
 const SPIKE_BURST = 15;
 
+// POST /errors 인증용. `pnpm --filter backend seed:api-key sim` 로 발급 후 export.
+const API_KEY = process.env.SIM_API_KEY ?? "";
+
 /**
  * 다음 요청까지 대기시간(초). 지수분포 = -ln(1-U)/λ.
  * 평균은 1/rate 지만 간격이 불규칙해 실제 포아송 트래픽을 흉내낸다.
@@ -89,8 +92,7 @@ async function postError(url: string, service: string): Promise<boolean> {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        // T20 레이트리밋 우회용. 지금은 서버가 무시.
-        "x-load-test": "1",
+        authorization: `Bearer ${API_KEY}`,
       },
       body: JSON.stringify({ service, message: `simulated error @ ${new Date().toISOString()}` }),
     });
@@ -137,6 +139,12 @@ async function run(cfg: SimConfig): Promise<void> {
 
 // main guard — 직접 실행할 때만. import(테스트) 시엔 순수 함수만 노출.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (!API_KEY) {
+    console.error(
+      "SIM_API_KEY 가 필요합니다.\n  pnpm --filter backend seed:api-key sim\n로 발급한 토큰을 export SIM_API_KEY=... 하세요.",
+    );
+    process.exit(1);
+  }
   run(parseSimArgs(process.argv.slice(2))).catch((e: unknown) => {
     console.error(e);
     process.exit(1);

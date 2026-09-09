@@ -2,6 +2,7 @@ import { Logger, type INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 import { AppModule } from "../src/app.module";
+import { TEST_BEARER } from "./auth";
 import { AlertFailure } from "../src/db/entities/alert-failure.entity";
 import { Alert } from "../src/db/entities/alert.entity";
 import { ErrorLog } from "../src/db/entities/error-log.entity";
@@ -42,7 +43,11 @@ describe("redis-down fallback (e2e)", () => {
 
   it("Redis 다운이어도 POST /errors 는 201, 임계값 넘으면 발송만 정지", async () => {
     for (let i = 0; i < 15; i++) {
-      await http().post("/errors").send({ service: "payments", message: "boom" }).expect(201);
+      await http()
+        .post("/errors")
+        .set("authorization", TEST_BEARER)
+        .send({ service: "payments", message: "boom" })
+        .expect(201);
     }
 
     // 짧게 대기: 혹시 잘못 enqueue 됐다면 워커가 처리할 시간
