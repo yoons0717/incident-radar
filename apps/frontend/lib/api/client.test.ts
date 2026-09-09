@@ -48,4 +48,22 @@ describe("apiGet", () => {
     mockFetch(() => Promise.reject(new TypeError("Failed to fetch")));
     await expect(apiGet("/x", Schema)).rejects.toMatchObject({ kind: "network" });
   });
+
+  it("credentials:'include' 로 요청한다 (세션 쿠키 전송)", async () => {
+    const spy = vi.fn(() => ({ ok: true, json: async () => ({ a: 1 }) }));
+    vi.stubGlobal("fetch", spy as unknown as typeof fetch);
+    await apiGet("/x", Schema);
+    expect(spy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ credentials: "include" }),
+    );
+  });
+
+  it("401 이면 window.location 을 /login 으로 보낸다", async () => {
+    const loc = { pathname: "/", href: "" };
+    vi.stubGlobal("window", { location: loc } as unknown as Window & typeof globalThis);
+    mockFetch(() => ({ ok: false, status: 401, statusText: "Unauthorized" }));
+    await expect(apiGet("/x", Schema)).rejects.toMatchObject({ kind: "http" });
+    expect(loc.href).toBe("/login");
+  });
 });

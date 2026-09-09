@@ -19,6 +19,12 @@ const envSchema = z.object({
   RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(600),
   // 대시보드 로그인 세션 쿠키 서명 키. 최소 16자.
   SESSION_SECRET: z.string().min(16),
+  // 세션 쿠키 Secure 플래그. 미설정(빈 값 포함)이면 NODE_ENV=production 여부로 결정.
+  // 로컬 docker compose 는 production 으로 뜨지만 http 라 "false" 로 내려야 로그인이 된다.
+  SESSION_COOKIE_SECURE: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.enum(["true", "false"]).optional(),
+  ),
   // 관리자 계정 seed 용 (seed:admin CLI 에서만 읽음). 앱 부팅엔 불필요.
   SEED_ADMIN_EMAIL: z.string().email().optional(),
   SEED_ADMIN_PASSWORD: z.string().min(8).optional(),

@@ -5,6 +5,10 @@
 cooldown으로 억제하고, 발송 실패는 지수 백오프로 재시도한다. Redis가 죽어도 감지는
 DB로 계속되고(알림 발송만 일시 정지), 대시보드로 실시간 상태를 볼 수 있다.
 
+대시보드 — 서비스별 에러 추이, 활성 cooldown, 최근 알림(성공·실패 병합). 로그인 뒤에 있다.
+
+![Incident Radar 대시보드](docs/images/dashboard.png)
+
 ## 스택
 
 | 영역 | 기술 | 선택 이유 |
@@ -101,34 +105,37 @@ cooldown이 스스로 만료된다.
 
 ## 로컬 실행
 
+### 풀스택 한 번에 (docker compose)
+
 ```bash
-# 1) 인프라(Postgres, Redis)
-docker compose up -d
-
-# 2) 환경변수
 cp .env.example .env
+# .env 에 SESSION_SECRET(16자+), SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD 를 채운다
 
-# 3) 의존성 + 마이그레이션
+docker compose up --build -d          # postgres · redis · backend(:3000) · frontend(:3001)
+# backend 로그에 "listening on :3000" 이 뜨면:
+docker compose exec backend pnpm seed:admin   # 대시보드 로그인 계정
+```
+
+대시보드 <http://localhost:3001> 를 열고 `SEED_ADMIN_*` 계정으로 로그인. 컨테이너는
+`NODE_ENV=production` 으로 뜨지만 `SESSION_COOKIE_SECURE=false`(compose 에 설정됨)라
+http 로도 세션이 물린다.
+
+### 개발 루프 (pnpm, watch 모드)
+
+```bash
+docker compose up -d postgres redis
+cp .env.example .env
 pnpm install
 pnpm --filter backend migration:run
+pnpm --filter backend seed:admin      # .env 의 SEED_ADMIN_* 필요
 
-# 3b) 대시보드 로그인용 admin 계정 (.env 의 SEED_ADMIN_* 를 채운 뒤)
-pnpm --filter backend seed:admin
+pnpm --filter backend dev             # :3000
+pnpm --filter frontend dev            # :3001 (별도 터미널)
 
-# 4) 백엔드 (:3000)
-pnpm --filter backend dev
-
-# 5) 프론트 (:3001, 별도 터미널)
-pnpm --filter frontend dev
-
-# 6) 데모 트래픽 (선택, 별도 터미널)
-#    POST /errors 는 API 키가 필요하다 — 하나 발급해서 export
+# 데모 트래픽 (선택) — POST /errors 는 API 키가 필요하다
 export SIM_API_KEY=$(pnpm --filter backend --silent seed:api-key sim)
 pnpm --filter @incident-radar/tools sim -- --spike checkout
 ```
-
-`docker compose up`은 아직 Postgres·Redis만 띄운다 — backend/frontend 컨테이너 추가는
-남은 코어 작업이라 그 전까지는 위처럼 `pnpm dev`로 직접 띄운다.
 
 ## API
 

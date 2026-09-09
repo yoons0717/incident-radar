@@ -24,12 +24,24 @@ export class ApiError extends Error {
 export async function apiGet<T>(path: string, schema: ZodType<T>): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${API_URL}${path}`, { headers: { accept: "application/json" } });
+    res = await fetch(`${API_URL}${path}`, {
+      headers: { accept: "application/json" },
+      // 대시보드 조회 라우트는 로그인 세션 쿠키를 요구한다. 다른 오리진이라 include 필요.
+      credentials: "include",
+    });
   } catch (e) {
     throw new ApiError("network", `요청 실패: GET ${path}`, e);
   }
 
   if (!res.ok) {
+    // 세션이 없거나 만료 → 로그인 화면으로. (SSR/테스트엔 window 가 없다.)
+    if (
+      res.status === 401 &&
+      typeof window !== "undefined" &&
+      window.location.pathname !== "/login"
+    ) {
+      window.location.href = "/login";
+    }
     throw new ApiError("http", `GET ${path} → ${res.status} ${res.statusText}`);
   }
 

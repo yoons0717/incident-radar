@@ -1,6 +1,8 @@
 "use client";
 
 import { useIsFetching } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
+import { logout } from "@/lib/api/auth";
 import { useDashboardUi, type RangeMinutes } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -11,9 +13,15 @@ const RANGES: { label: string; value: RangeMinutes }[] = [
 ];
 
 export function TopBar() {
+  const router = useRouter();
   const rangeMinutes = useDashboardUi((s) => s.rangeMinutes);
   const setRange = useDashboardUi((s) => s.setRange);
   const fetching = useIsFetching() > 0;
+
+  async function onLogout() {
+    await logout();
+    router.push("/login");
+  }
 
   return (
     <header className="flex flex-wrap items-center gap-4 border-b border-border pb-[18px]">
@@ -57,6 +65,14 @@ export function TopBar() {
         />
         실시간
       </span>
+
+      <button
+        type="button"
+        onClick={onLogout}
+        className="text-[11.5px] text-ink-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      >
+        로그아웃
+      </button>
     </header>
   );
 }

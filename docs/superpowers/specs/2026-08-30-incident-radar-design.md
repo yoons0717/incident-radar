@@ -44,7 +44,7 @@
 - 서비스별 기본 에러율을 두고, 지수 분포 간격으로 `POST /errors` 호출
 - `--spike <service>` — 한 서비스에 임계값 초과 버스트를 쏴 알림·cooldown 경로를 즉시 시연
 - `--rate`, `--duration` 등으로 부하 조절
-- 대상 URL은 env로 주입, 인증 없음(레이트리밋만 통과하면 됨)
+- 대상 URL과 API 키(`SIM_API_KEY`)를 env로 주입 — `POST /errors`가 인증을 요구한다(인증 확장에서 추가됨)
 
 ## 4. 백엔드 설계
 
