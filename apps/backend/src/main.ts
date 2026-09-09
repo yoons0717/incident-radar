@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { SwaggerModule } from "@nestjs/swagger";
 import helmet from "helmet";
 import { Logger } from "nestjs-pino";
@@ -11,9 +12,13 @@ import { buildOpenApiDocument } from "./openapi/openapi.document";
 async function bootstrap() {
   // bufferLogs: true — useLogger 로 pino 를 붙이기 전(모듈 초기화 중) 로그가
   // 유실되지 않고 버퍼링됐다가 붙는 순간 한꺼번에 플러시된다.
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
   app.use(helmet());
+
+  // Railway/Vercel 같은 리버스 프록시 뒤 — X-Forwarded-Proto 를 신뢰해야 express 가 요청을
+  // https 로 인식하고 Secure 세션 쿠키를 내보낸다. (없으면 프록시 뒤에서 로그인이 안 물린다.)
+  app.set("trust proxy", 1);
 
   // SIGTERM/SIGINT 시 onModuleDestroy 훅이 돌아 DB·Redis·큐 연결을 정리한다.
   app.enableShutdownHooks();

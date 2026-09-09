@@ -28,6 +28,10 @@ export class SessionModule implements NestModule, OnModuleInit, OnModuleDestroy 
     this.client = createClient({ url: config.get("REDIS_URL", { infer: true }) });
     this.client.on("error", (err: unknown) => this.logger.error(`session redis: ${String(err)}`));
 
+    // 프로덕션은 프론트(Vercel)와 백엔드(Railway)가 다른 도메인 → 크로스사이트 쿠키 전송에
+    // SameSite=None + Secure 필요. dev/test 는 같은 호스트라 Lax 유지(Secure 는 HTTPS 강제라 못 씀).
+    const isProd = config.get("NODE_ENV", { infer: true }) === "production";
+
     this.middleware = session({
       store: new RedisStore({ client: this.client, prefix: "sess:" }),
       secret: config.get("SESSION_SECRET", { infer: true }),
@@ -36,8 +40,8 @@ export class SessionModule implements NestModule, OnModuleInit, OnModuleDestroy 
       rolling: true,
       cookie: {
         httpOnly: true,
-        sameSite: "lax",
-        secure: config.get("NODE_ENV", { infer: true }) === "production",
+        sameSite: isProd ? "none" : "lax",
+        secure: isProd,
         maxAge: 7 * 24 * 60 * 60 * 1000,
       },
     });
