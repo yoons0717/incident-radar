@@ -15,6 +15,7 @@ DB로 계속되고(알림 발송만 일시 정지), 대시보드로 실시간 �
 | Realtime / Cache | Redis · ioredis | 슬라이딩 윈도우 집계 + cooldown 상태 관리 |
 | Queue | BullMQ | 에러 수집과 webhook 알림을 비동기로 분리 |
 | Validation | Zod | API 경계의 런타임 검증 + 백엔드/프론트 스키마 공유 |
+| Auth | express-session · connect-redis · bcrypt | 대시보드 로그인 세션(Redis 저장) + 수집 API 키 |
 | Frontend | Next.js · Tailwind CSS | 설정 최소화로 대시보드 UI 구성 |
 | Server State | TanStack Query | API 캐싱 + 5초 폴링 |
 | UI State | Zustand | 서버 데이터와 화면 상태 분리 |
@@ -88,6 +89,16 @@ BullMQ 큐에 넣으면 재시도 상태가 Redis에 영속돼 재시작에도 �
 실패"를 원자적으로 처리해 이 레이스를 없앤다. `EX`로 TTL을 같이 주면 별도 정리 없이
 cooldown이 스스로 만료된다.
 
+**대시보드 인증에 서버 세션 vs JWT** — JWT는 무상태라 저장소가 필요 없지만, 한 번
+발급하면 만료 전엔 서버가 취소하기 어렵다(로그아웃·강제 만료를 하려면 결국 무효화
+목록을 Redis에 둬야 한다). 이 프로젝트는 이미 Redis가 있어서 서버 세션의 유일한
+비용(공유 저장소)이 사실상 0이고, 대신 로그아웃이 즉시 반영되고 "이 유저 전 기기
+로그아웃" 같은 것도 키 삭제로 끝난다. 그래서 `express-session` + `connect-redis`를
+택했다. connect-redis v10은 node-redis 클라이언트만 받으므로(ioredis 비호환) 세션
+전용 커넥션을 따로 연다 — 앱 캐시 I/O와 세션 I/O를 분리하는 편이기도 하다. 수집
+엔드포인트(`POST /errors`)는 사람이 아니라 앱이 부르므로 세션이 아니라 API 키로
+인증한다.
+
 ## 로컬 실행
 
 ```bash
@@ -101,6 +112,9 @@ cp .env.example .env
 pnpm install
 pnpm --filter backend migration:run
 
+# 3b) 대시보드 로그인용 admin 계정 (.env 의 SEED_ADMIN_* 를 채운 뒤)
+pnpm --filter backend seed:admin
+
 # 4) 백엔드 (:3000)
 pnpm --filter backend dev
 
@@ -108,6 +122,8 @@ pnpm --filter backend dev
 pnpm --filter frontend dev
 
 # 6) 데모 트래픽 (선택, 별도 터미널)
+#    POST /errors 는 API 키가 필요하다 — 하나 발급해서 export
+export SIM_API_KEY=$(pnpm --filter backend --silent seed:api-key sim)
 pnpm --filter @incident-radar/tools sim -- --spike checkout
 ```
 
@@ -123,26 +139,38 @@ VS Code REST Client / JetBrains용 요청 모음도 있다.
 # 헬스체크 — DB 다운이면 503, Redis만 다운이면 200 degraded
 curl http://localhost:3000/health
 
-# 에러 보고
+# 에러 보고 (API 키 필수 — pnpm --filter backend seed:api-key <이름> 으로 발급)
 curl -X POST http://localhost:3000/errors \
   -H "content-type: application/json" \
+  -H "authorization: Bearer $SIM_API_KEY" \
   -d '{"service":"checkout","message":"payment gateway timeout"}'
 
-# 이력 조회 (service 필수)
-curl "http://localhost:3000/errors?service=checkout&limit=50"
+# 로그인 (세션 쿠키를 파일로 저장)
+curl -c cookies.txt -X POST http://localhost:3000/auth/login \
+  -H "content-type: application/json" \
+  -d '{"email":"me@example.com","password":"..."}'
 
-# 대시보드 — 서비스별 에러 추이(시간 버킷)
-curl "http://localhost:3000/stats?service=checkout&bucket=60"
+# 조회 라우트는 로그인 세션 필수 — 저장한 쿠키를 함께 보낸다
+curl -b cookies.txt "http://localhost:3000/errors?service=checkout&limit=50"
+curl -b cookies.txt "http://localhost:3000/stats?service=checkout&bucket=60"
+curl -b cookies.txt http://localhost:3000/status
+curl -b cookies.txt http://localhost:3000/alerts
 
-# 대시보드 — 서비스별 현재 상태 + cooldown
-curl http://localhost:3000/status
-
-# 대시보드 — 최근 알림(발송/실패 병합)
-curl http://localhost:3000/alerts
+# API 키 발급 (admin 로그인 필요, 평문 토큰은 이 응답에서만)
+curl -b cookies.txt -X POST http://localhost:3000/api-keys \
+  -H "content-type: application/json" -d '{"name":"ci-runner"}'
 ```
 
-`POST /errors`는 IP 기준으로 분당 `RATE_LIMIT_PER_MIN`(기본 600)건까지만 받는다.
-시뮬레이터·부하테스트 트래픽은 `X-Load-Test` 헤더를 붙이면 이 제한을 건너뛴다.
+**인증 두 갈래.** 기계는 API 키로 쓰고, 사람은 로그인해서 읽는다.
+
+- `POST /errors` (수집) → `Authorization: Bearer <API 키>`. 키는 admin 이
+  `POST /api-keys` 또는 `pnpm --filter backend seed:api-key <이름>` 으로 발급하고,
+  평문은 발급 시 1회만 노출된다(DB엔 sha256 해시). `RATE_LIMIT_PER_MIN`(기본 600) IP
+  레이트리밋도 함께 걸린다 — 부하테스트는 이 값을 올린다.
+- `GET /errors`·`/stats`·`/status`·`/alerts`·`/auth/me` (조회) → 로그인 세션 쿠키.
+  `POST /auth/login` 이 세션을 만들고(Redis 저장), `/auth/logout` 이 즉시 무효화한다.
+  로그인은 무차별 대입 방지로 분당 10회로 제한된다.
+- `POST`·`GET`·`DELETE /api-keys` (키 관리) → admin 역할 세션만.
 
 ## 테스트
 
