@@ -87,13 +87,13 @@ export function StatTiles() {
           요약 지표를 불러오지 못했습니다.
         </div>
       ) : firstLoad ? (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {[0, 1, 2, 3].map((i) => (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+          {[0, 1, 2].map((i) => (
             <SkeletonTile key={i} />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
           <Tile label={`최근 ${rangeLabel(rangeMinutes)} 에러`} value={errors} />
 
           <Tile
@@ -114,12 +114,6 @@ export function StatTiles() {
             value={cooling}
             crit={cooling > 0}
             sub={coolingNames.length > 0 ? coolingNames.slice(0, 3).join(" · ") : undefined}
-          />
-
-          <Tile
-            label="수집→알림 p95"
-            value={<span className="text-ink-faint">&mdash;</span>}
-            sub="이후 편에서"
           />
         </div>
       )}
