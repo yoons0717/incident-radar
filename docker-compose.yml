@@ -37,6 +37,8 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://ir:ir@postgres:5432/incident_radar
       REDIS_URL: redis://redis:6379
+      # production 이지만 http://localhost 로 접속하므로 Secure 쿠키를 끈다(안 그러면 로그인이 안 됨).
+      SESSION_COOKIE_SECURE: "false"
     ports:
       - "3000:3000"
     depends_on:

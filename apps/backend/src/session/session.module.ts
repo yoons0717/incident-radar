@@ -28,9 +28,11 @@ export class SessionModule implements NestModule, OnModuleInit, OnModuleDestroy 
     this.client = createClient({ url: config.get("REDIS_URL", { infer: true }) });
     this.client.on("error", (err: unknown) => this.logger.error(`session redis: ${String(err)}`));
 
-    // 프로덕션은 프론트(Vercel)와 백엔드(Railway)가 다른 도메인 → 크로스사이트 쿠키 전송에
-    // SameSite=None + Secure 필요. dev/test 는 같은 호스트라 Lax 유지(Secure 는 HTTPS 강제라 못 씀).
+    // Secure 쿠키 여부: SESSION_COOKIE_SECURE 가 있으면 그 값, 없으면 NODE_ENV=production.
+    // 로컬 docker compose 는 production 으로 뜨지만 http 라 "false" 로 내린다(안 그러면 쿠키가 안 심김).
+    const secureOverride = config.get("SESSION_COOKIE_SECURE", { infer: true });
     const isProd = config.get("NODE_ENV", { infer: true }) === "production";
+    const secure = secureOverride !== undefined ? secureOverride === "true" : isProd;
 
     this.middleware = session({
       store: new RedisStore({ client: this.client, prefix: "sess:" }),
@@ -40,8 +42,10 @@ export class SessionModule implements NestModule, OnModuleInit, OnModuleDestroy 
       rolling: true,
       cookie: {
         httpOnly: true,
-        sameSite: isProd ? "none" : "lax",
-        secure: isProd,
+        // 배포 시 프론트(Vercel)·백엔드(Railway)가 다른 도메인 → 크로스사이트 쿠키에 SameSite=None
+        // (그리고 None 은 Secure 를 요구). Secure 가 꺼지면 같은 호스트 가정이므로 Lax.
+        sameSite: secure ? "none" : "lax",
+        secure,
         maxAge: 7 * 24 * 60 * 60 * 1000,
       },
     });
