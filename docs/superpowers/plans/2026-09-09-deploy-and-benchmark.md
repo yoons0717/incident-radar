@@ -1,9 +1,11 @@
-# 배포 + 부하 측정 Plan
+# 인증 완성 + 부하 측정 Plan
 
-**Goal:** 이미 만든 Incident Radar를 (A) 인증을 풀스택으로 완성해 main에 합치고, (B) Railway + Vercel에 라이브로 띄우고, (C) 부하 테스트로 수치를 뽑아 README에 남긴다. 새 도메인 기능은 안 만든다.
+**Goal:** 이미 만든 Incident Radar를 (A) 인증을 풀스택으로 완성해 main에 합치고, (C) 부하 테스트로 수치를 뽑아 README에 남긴다. 새 도메인 기능은 안 만든다.
+
+> **배포(Track B) 폐기 (2026-09-09):** 무료 배포 경로가 계정 3개 + 콜드스타트 + 커맨드 제한이라 품 대비 얻는 게 적고, 사용자 판단상 라이브 데모가 결정타가 아님. B1(프로덕션 세션 쿠키)만 이미 커밋됨(`db542f1`) — 나중에 배포하면 그대로 쓰임. 나머지 B2~B6은 안 함. "눈에 보이는 결과물"은 README 스크린샷 + `docker compose up`(T28 풀스택 compose)로 대체.
 
 **포트폴리오 약점 → 대응**
-- 라이브 URL 없음 → Track B (배포)
+- 눈에 보이는 결과물 없음 → README 스크린샷/GIF + `docker compose up` 실행법 (C3에 포함)
 - 기능이 평범 → **Track A** (인증: A1 백엔드 머지 + A2 프론트 로그인 = 풀스택)
 - 성능 증명 없음 → Track C (부하 측정)
 
@@ -13,7 +15,7 @@
 - 문서·커밋에 "포트폴리오" 단어 금지 → "학습 프로젝트"
 - 자동 커밋 금지. 태스크 끝마다 메시지 제안 → 확인받고 커밋
 - 커밋 꼬리말: `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>` + `Claude-Session: https://claude.ai/code/session_01JCA3uq8wo5J8jcuXdv6rRz`
-- 브랜치: A1은 PR #1을 main 머지. A2 + Track B·C는 main에서 `chore/deploy-and-benchmark` 파서 별도 PR
+- 브랜치: A1은 PR #1을 main 머지. A2 + Track C는 main에서 `chore/deploy-and-benchmark` 파서 별도 PR
 
 ---
 
@@ -40,51 +42,9 @@
 
 ---
 
-## Track B — Railway + Vercel 배포
+## Track B — 폐기
 
-### B1. 프로덕션 세션 쿠키
-- `session.module.ts`: 쿠키 `sameSite`를 프로덕션에서만 `"none"` (이미 `secure`는 prod에서 true)
-- `main.ts`: `trust proxy` 켜기 (Railway 프록시 뒤 Secure 쿠키용)
-- 자동 테스트 새로 안 붙임 (스펙이 앱 하나 공유해서 prod 모드 격리가 번거로움) — 실검증은 B4 Step 5
-
-**검증:** `pnpm --filter backend test` 회귀 없음
-
-### B2. Railway에 백엔드 + Postgres + Redis
-- `railway.json`: `builder: DOCKERFILE`, `dockerfilePath: apps/backend/Dockerfile`, `healthcheckPath: /health`. `startCommand` 안 씀 (Dockerfile CMD가 이미 `migration:run && node dist/main.js`)
-- Railway 프로젝트 + PostgreSQL 플러그인 + Redis 플러그인
-- 백엔드 env: `NODE_ENV=production`, `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `REDIS_URL=${{Redis.REDIS_URL}}`, `SESSION_SECRET`, `CORS_ORIGIN`(placeholder, B4에서 교체), `RATE_LIMIT_PER_MIN=600`, `WEBHOOK_URL`(빈값). `PORT`는 Railway 자동 주입
-- Root Directory는 레포 루트
-
-**검증:** `curl /health` → 200, `curl /docs-json` → OpenAPI JSON
-
-### B3. 관리자 계정 seed
-- Railway env에 `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD` 임시 추가
-- Railway 대시보드 one-off 명령으로 `pnpm --filter backend seed:admin` (`railway run`은 내부 DB 주소라 노트북에서 안 닿음)
-- `SEED_ADMIN_PASSWORD` env 제거
-- sim용 API 키는 B5에서 admin 로그인 후 `POST /api-keys`로 발급
-
-**검증:** `curl POST /auth/login` → 200 + Set-Cookie, 쿠키로 `GET /status` → 200
-
-### B4. Vercel에 프론트 배포 + `CORS_ORIGIN` 되먹임
-- Vercel 프로젝트: Root Directory `apps/frontend`, Framework Next.js
-- **Build Command 오버라이드**: `cd ../.. && pnpm turbo run build --filter=@incident-radar/frontend...` (그냥 `next build`면 `@incident-radar/shared` dist 없어서 실패)
-- 프론트 env: `NEXT_PUBLIC_API_URL`(Railway 백엔드 URL), `NEXT_PUBLIC_ALERT_THRESHOLD=10`, `NEXT_PUBLIC_COOLDOWN_SEC=300`
-- 배포 후 Railway 백엔드 `CORS_ORIGIN`을 실제 Vercel URL로 교체 → 백엔드 재배포
-
-**검증:** Vercel URL 접속 → `/login`으로 튕김 → admin 로그인 → 패널 정상, 콘솔 CORS 에러 없음, 새로고침해도 세션 유지 (= B1 검증)
-
-### B5. 데모 트래픽 cron
-- admin 로그인 → `POST /api-keys`로 sim 키 발급
-- Railway cron 서비스 `demo-traffic`: 같은 레포, `*/15 * * * *`, 커맨드 `pnpm --filter @incident-radar/tools sim -- --url "$API_URL" --rate 1 --duration 120s`
-- env: `API_URL`, `SIM_API_KEY`
-- (선택) 스파이크 cron 별도 서비스, `7 */2 * * *`, `--spike checkout`
-
-**검증:** 수동 트리거 → 로그에 `sent N requests` 요약 후 종료, 대시보드에 데이터 반영
-
-### B6. README에 라이브 링크 + 스크린샷
-- `mkdir -p docs/images`, 브라우저로 admin 로그인 후 대시보드 전체 캡처 → `docs/images/dashboard-live.png`
-- README 상단: 대시보드/`/docs`/`/health` 링크 + 스크린샷 + "로그인 뒤에 있음, 15분마다 시뮬레이터가 트래픽 넣음" 한 줄
-- `## 로컬 실행` 근처: "배포는 Railway(백+PG+Redis) + Vercel(프론트), `railway.json` 참고" 한 줄
+B1(프로덕션 세션 쿠키: `session.module.ts` `sameSite:"none"` + `main.ts` `trust proxy`)만 커밋됨(`db542f1`). B2~B6(Railway/Vercel 배포, 데모 cron, 라이브 링크)은 안 함.
 
 ---
 
@@ -103,21 +63,19 @@
 
 **검증:** `pnpm --filter @incident-radar/tools exec vitest run bench-latency` 통과, 실제 `ingest.log`에 실행
 
-### C3. `bench/RESULTS.md` + README 성능 섹션
+### C3. `bench/RESULTS.md` + README 성능 섹션 + README 폴리시
 - `bench/RESULTS.md`: 방법론(머신 스펙, PG·Redis는 같은 머신 Docker) + autocannon 표(req/s, p50/p97.5/p99) + latencyMs 표 + 관찰 + "규모 커지면 /stats·/status 캐시가 첫 손댈 곳"
 - README `## 설계 근거` 뒤에 `## 성능` 압축판 + RESULTS.md 링크
+- README 폴리시(배포 대신): `docker compose up`으로 풀스택 띄우는 실행법(로그인 계정 seed 포함) + 대시보드 스크린샷 1장(`docs/images/dashboard.png`, 로컬에서 캡처)
 - PR 생성
 
-**검증:** RESULTS.md에 미기입 placeholder 없음
+**검증:** RESULTS.md에 미기입 placeholder 없음, README 스크린샷 렌더됨
 
 ---
 
-## 미해결 (사용자 판단)
-- merge vs squash (A1)
-- Railway 유료 플랜 여부 (B2)
-- 데모 트래픽 누적분 정리 정책 (B5) — 지금은 자동 정리 없음
-- B1 대안: Next.js rewrites로 `/api/*` 프록시하면 크로스사이트 쿠키 문제 자체가 사라짐 (설정 더 많음). P3에서 프론트를 어차피 손대므로 이 대안도 재고 가능
+## 미해결
+- 없음 (배포 관련 항목은 Track B 폐기로 소멸)
 
 ## 실행 순서
-A1(머지) → A2(프론트 로그인) → B1 → B2 → B3 → B4 → B5 → B6 → C1 → C2 → C3.
-시간 빠듯하면 A1+A2+B까지 = "라이브 + 풀스택 인증" 확보. C는 로컬이라 나중에 추가 가능.
+A1(머지) ✅ → A2(프론트 로그인) ✅ → B1(프로덕션 쿠키) ✅ → C1 → C2 → C3.
+남은 건 Track C — 로컬 부하 측정 + README 폴리시.
