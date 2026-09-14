@@ -139,6 +139,18 @@ export SIM_API_KEY=$(pnpm --filter backend --silent seed:api-key sim)
 pnpm --filter @incident-radar/tools sim -- --spike checkout
 ```
 
+### webhook 실제로 붙여보기 (선택, Discord)
+
+`WEBHOOK_URL`에 아무 URL이나 넣으면 워커가 그리로 제네릭 JSON을 POST 한다(§설계 근거).
+Discord webhook API는 `content`/`embeds` 필드가 있는 body를 요구해 그대로는 안 맞으므로,
+`tools/discord-relay.ts`가 그 사이에서 포맷만 변환해주는 어댑터 역할을 한다 — 코어
+알림 로직은 Discord를 몰라도 된다.
+
+```bash
+# .env 에 DISCORD_WEBHOOK_URL(Discord 채널 설정 → 연동 → 웹후크)을 채우고 WEBHOOK_URL=http://localhost:8787
+pnpm --filter @incident-radar/tools relay   # :8787, DISCORD_WEBHOOK_URL 로 포워드
+```
+
 ## API
 
 Swagger UI: `http://localhost:3000/docs` (JSON은 `/docs-json`). `apps/backend/api.http`에

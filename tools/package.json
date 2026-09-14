@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "sim": "tsx simulator.ts",
+    "relay": "tsx discord-relay.ts",
     "test": "vitest run",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
