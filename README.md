@@ -151,6 +151,8 @@ Discord webhook API는 `content`/`embeds` 필드가 있는 body를 요구해 그
 pnpm --filter @incident-radar/tools relay   # :8787, DISCORD_WEBHOOK_URL 로 포워드
 ```
 
+![Discord 알림](docs/images/discord-alert.jpg)
+
 ## API
 
 Swagger UI: `http://localhost:3000/docs` (JSON은 `/docs-json`). `apps/backend/api.http`에
