@@ -1,5 +1,7 @@
 # Incident Radar
 
+[![CI](https://github.com/yoons0717/incident-radar/actions/workflows/ci.yml/badge.svg)](https://github.com/yoons0717/incident-radar/actions/workflows/ci.yml)
+
 실시간 에러 모니터링·알림 서비스. 여러 앱이 에러를 보고하면(`POST /errors`) 서비스별
 최근 60초 에러 수를 세다가 임계값을 넘으면 webhook으로 알림을 발송한다. 중복 알림은
 cooldown으로 억제하고, 발송 실패는 지수 백오프로 재시도한다. Redis가 죽어도 감지는
