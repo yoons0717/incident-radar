@@ -23,8 +23,20 @@ interface AlertPayload {
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL ?? "";
 const PORT = Number(process.env.RELAY_PORT ?? 8787);
 
-function toDiscordContent(data: AlertPayload): string {
-  return `🚨 **${data.service}**: ${data.count}건 (threshold ${data.threshold}) — 최근 ${data.windowMs / 1000}초 윈도우, ${data.at}`;
+/** 60000의 배수면 분 단위로, 아니면 초 단위로 — "윈도우 60초" 같은 raw 설정값 노출 대신 자연스러운 단위. */
+function windowLabel(windowMs: number): string {
+  return windowMs % 60_000 === 0 ? `${windowMs / 60_000}분` : `${windowMs / 1000}초`;
+}
+
+/** https://discord.com/developers/docs/resources/webhook#execute-webhook-jsonform-params */
+function toDiscordEmbed(data: AlertPayload) {
+  return {
+    title: `🚨 ${data.service} 인시던트 알림`,
+    description: `최근 ${windowLabel(data.windowMs)} 동안 에러 **${data.count}건** 발생 — 임계값(${data.threshold}건) 초과`,
+    color: 0xed4245,
+    timestamp: data.at,
+    footer: { text: "Incident Radar" },
+  };
 }
 
 export function createRelayServer(discordWebhookUrl: string) {
@@ -42,7 +54,7 @@ export function createRelayServer(discordWebhookUrl: string) {
           const discordRes = await fetch(discordWebhookUrl, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ content: toDiscordContent(data) }),
+            body: JSON.stringify({ embeds: [toDiscordEmbed(data)] }),
           });
           console.log(`relay: ${data.service} → discord ${discordRes.status}`);
           res.writeHead(discordRes.ok ? 200 : discordRes.status).end();
