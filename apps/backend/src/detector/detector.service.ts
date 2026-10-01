@@ -79,14 +79,14 @@ export class DetectorService {
       } else if (acquired) {
         // cooldown 락을 잡은 요청만 알림을 낸다 (나머지는 조용히 skip → 알림 폭풍 억제).
         // 적재를 기다리지 않는다: BullMQ 연결이 재연결 중이면 add 가 실패 대신 수 초 대기한다.
-        // 적재가 실패하면 Redis 락은 이미 잡은 상태 → 메모리 cooldown 확인 없이 직접 발송.
-        // 메모리 cooldown 은 잡아둔다: 그 사이 Redis 다운 경로로 넘어간 요청이 또 보내지 않게.
+        // 적재가 실패하면 직접 발송한다. 단 메모리 cooldown 을 확인한다: 적재가 멈춰 있던 사이
+        // Redis 다운 경로로 넘어간 요청이 이미 degraded 로 보냈다면 같은 장애에 또 보내지 않게.
         this.alerts.enqueue(data).catch((e: unknown) => {
-          this.localCooldownUntil.set(service, this.clock.now() + this.cooldownMs);
+          const send = this.tryAcquireLocal(service, this.clock.now());
           this.logger.warn(
-            `alert degraded: enqueue failed (service=${service} count=${count}) — ${String(e)}`,
+            `alert ${send ? "degraded" : "skipped"}: enqueue failed (service=${service} count=${count}) — ${String(e)}`,
           );
-          void this.alerts.dispatchDirect(data);
+          if (send) void this.alerts.dispatchDirect(data);
         });
         enqueued = true;
       }

@@ -172,26 +172,25 @@ describe("DetectorService", () => {
     expect(directCalls).toHaveLength(1);
   });
 
-  it("enqueue 를 기다리지 않고, 나중에 실패하면 메모리 cooldown 확인 없이 직접 발송", async () => {
+  it("enqueue 를 기다리지 않고, 그 사이 degraded 로 이미 보냈으면 적재 실패 후 다시 보내지 않는다", async () => {
     const { detector, alerts, directCalls, redisHealth } = makeDetector(THRESHOLD + 1, true);
 
-    // Redis 다운 경로로 메모리 cooldown 을 먼저 잡아둔다 (directCalls 1).
+    // A: Redis 락을 잡고 적재 시작 → 적재가 멈춰 있어도 바로 resolve.
+    let rejectEnqueue!: (e: Error) => void;
+    alerts.enqueue = () => new Promise((_, reject) => (rejectEnqueue = reject));
+    await detector.check("checkout", Date.now());
+    expect(String(log.mock.calls.at(-1)?.[0])).toContain("enqueued=true");
+
+    // B: 그 사이 Redis 가 죽어 degraded 로 1건 발송 (메모리 cooldown 획득).
     redisHealth.healthy = false;
     await detector.check("checkout", Date.now());
     expect(directCalls).toHaveLength(1);
 
-    redisHealth.healthy = true;
-    let rejectEnqueue!: (e: Error) => void;
-    alerts.enqueue = () => new Promise((_, reject) => (rejectEnqueue = reject));
-    await detector.check("checkout", Date.now()); // 적재가 안 끝나도 resolve 돼야 한다
-    expect(String(log.mock.calls.at(-1)?.[0])).toContain("enqueued=true");
-    expect(directCalls).toHaveLength(1);
-
-    // 큐 실패는 Redis cooldown 락을 이미 잡은 상태 → 메모리 cooldown 이 잡혀 있어도 발송한다.
+    // A 의 적재가 나중에 실패해도 메모리 cooldown 이 잡혀 있으니 중복 발송하지 않는다.
     rejectEnqueue(new Error("queue down"));
     await new Promise(setImmediate);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("alert degraded: enqueue failed"));
-    expect(directCalls).toHaveLength(2);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("enqueue failed"));
+    expect(directCalls).toHaveLength(1);
   });
 
   it("enqueue 실패로 직접 발송하면 메모리 cooldown 도 잡혀 Redis 다운 경로가 중복 발송하지 않는다", async () => {
