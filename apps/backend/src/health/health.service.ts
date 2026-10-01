@@ -7,8 +7,8 @@ export type HealthResult = { status: "ok" } | { status: "degraded"; redis: "down
 
 /**
  * DB 는 필수(실패 시 503) — 원장에 못 쓰면 서비스 불가로 본다.
- * Redis 는 fail-open 이라 다운이어도 200("degraded")만 — 감지는 DB fallback으로 계속되고
- * 알림 발송만 멈추는 상태를 "완전 정상"과 구분해 LB/오케스트레이터에 알린다.
+ * Redis 는 fail-open 이라 다운이어도 200("degraded")만 — 감지는 DB fallback, 알림은 재시도 없는
+ * 직접 발송으로 버티는 상태를 "완전 정상"과 구분해 LB/오케스트레이터에 알린다.
  */
 @Injectable()
 export class HealthService {

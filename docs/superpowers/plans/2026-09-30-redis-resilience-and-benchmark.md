@@ -1,6 +1,6 @@
 # Redis 장애 대응 보강 + 성능 측정 계획
 
-작성일: 2026-09-30 · 상태: **확정 (2026-09-30 컨펌)** · 진행: Step 1 완료, Step 2 착수 전
+작성일: 2026-09-30 · 상태: **확정 (2026-09-30 컨펌)** · 진행: Step 2 완료, Step 3 착수 전
 
 ## 목적
 
@@ -241,6 +241,28 @@ detector → cooldown 락 (메모리) → dispatch() 직접 호출
 ### 완료 조건
 - Redis 다운 상태에서 임계값을 넘으면 알림이 정확히 1건 나간다 (e2e + 수동 확인).
 - README와 주석이 실제 동작과 일치한다.
+
+### Step 2 결과 (2026-10-01)
+
+- **구현 위치:** 메모리 cooldown은 `DetectorService` 안의 Map이다. `Clock`이 이미 주입돼 있어서 모듈 배선을 바꿀 필요가 없었다. 직접 발송은 `AlertsService.dispatchDirect()`가 맡는다. 1회 발송하고, 실패하면 attempts=1로 기록하며, throw하지 않는다.
+- **degraded 경로로 넘어가는 경우 3가지**
+  - 헬스 플래그가 `false`: 메모리 cooldown을 확인한다.
+  - cooldown 단계의 Redis 실패: 메모리 cooldown을 확인한다. Step 1 리뷰에서 지적한 "타임아웃으로 서버에 락이 남는 경우"가 여기에 해당한다.
+  - 큐 적재 실패: 메모리 cooldown을 확인하지 않는다.
+- **테스트를 먼저 작성:** 수정 전에 5건이 실패했다. `dispatchDirect`가 없었고, degraded 경로가 없었고, fallback e2e의 알림이 0건이었다. 수정 후에는 전체 111개 테스트와 lint, typecheck가 통과했다. `--forceExit` 없이도 정상 종료한다.
+- **fallback e2e:** 기대값을 "알림 0건"에서 "알림 정확히 1건, degraded 로그 1회"로 바꿨다.
+- **수동 확인:** dev compose의 Redis를 `kill`하고 7초 뒤 `/health`가 `degraded`가 된 것을 확인했다. 그 상태에서 같은 서비스로 15건을 보냈다.
+  - 15건 모두 201이었고, 응답 시간은 각각 5~30ms였다.
+  - `alerts` 1행, `alert_failures` 0행이었다.
+  - relay 로그에 `degraded-demo → discord 204`가 남았다.
+  - 백엔드 로그에 Step 1에서 추가한 `redis 에러 이벤트 — healthy=false`도 찍혔다.
+- **코드 리뷰 후 수정한 것**
+  - webhook `fetch`에 5초 타임아웃을 걸었다. 응답 없는 webhook이면 degraded 1회 발송이 기본값(약 300초)만큼 걸려 있었다.
+  - **이 타임아웃은 큐 경로에도 적용된다.** 큐 경로에서는 타임아웃이 실패로 바뀌어 BullMQ 재시도를 탄다. "정상 경로는 바꾸지 않는다"는 원칙에서 의도적으로 벗어난 것이다.
+  - 큐 적재가 실패해서 직접 발송할 때도 메모리 cooldown을 잡도록 했다. 그 사이 Redis 다운 경로로 넘어간 요청이 같은 알림을 또 보내지 않게 하기 위해서다.
+  - 남아 있던 "발송 skip" 주석 두 곳을 고쳤다.
+  - "실패 기록까지 실패해도 throw하지 않는다" 테스트를 추가했다. 전체 테스트는 113개다.
+- **README:** 첫 문단, 아키텍처 다이어그램(메모리 cooldown과 직접 발송 노드 추가, mermaid-cli로 렌더링 확인), fail-open 설계 근거, "degraded 발송이 포기하는 것" 목록을 고쳤다. `health.service.ts`와 `redis-health.service.ts`의 주석도 고쳤다.
 
 ---
 

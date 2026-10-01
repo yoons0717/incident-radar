@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import type { ConfigService } from "@nestjs/config";
 import { testDataSource } from "../../test/db";
@@ -77,6 +78,7 @@ describe("AlertsService", () => {
       expect((init?.headers as Record<string, string>)["x-idempotency-key"]).toBe(
         "checkout:1699999980000",
       );
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
       expect(JSON.parse(String(init?.body))).toMatchObject({ service: "checkout", count: 12 });
       expect(await testDataSource.getRepository(Alert).count()).toBe(1);
 
@@ -93,6 +95,45 @@ describe("AlertsService", () => {
       expect(await testDataSource.getRepository(Alert).count()).toBe(0);
 
       fetchSpy.mockRestore();
+    });
+  });
+
+  describe("dispatchDirect (Redis 다운 경로)", () => {
+    it("성공하면 alerts 행 1개, 실패 기록 없음", async () => {
+      const { service } = makeService(undefined);
+      await service.dispatchDirect(JOB);
+
+      expect(await testDataSource.getRepository(Alert).count()).toBe(1);
+      expect(await testDataSource.getRepository(AlertFailure).count()).toBe(0);
+    });
+
+    it("webhook 이 실패하면 throw 하지 않고 재시도 없이 attempts=1 로 실패를 기록한다", async () => {
+      const fetchSpy = jest
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response(null, { status: 500 }));
+      const { service } = makeService("https://hook.example/incident");
+
+      await service.dispatchDirect(JOB);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const rows = await testDataSource.getRepository(AlertFailure).find();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ service: "checkout", attempts: 1 });
+      expect(rows[0]!.error).toMatch(/500/);
+
+      fetchSpy.mockRestore();
+    });
+
+    it("실패 기록까지 실패해도(DB 다운) throw 하지 않는다", async () => {
+      const { service } = makeService(undefined);
+      jest.spyOn(service, "dispatch").mockRejectedValue(new Error("db down"));
+      jest.spyOn(service, "recordFailure").mockRejectedValue(new Error("db down"));
+      const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+
+      await expect(service.dispatchDirect(JOB)).resolves.toBeUndefined();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("alert failure record failed"));
+
+      jest.restoreAllMocks();
     });
   });
 

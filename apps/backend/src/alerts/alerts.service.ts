@@ -49,6 +49,8 @@ export class AlertsService {
           "x-idempotency-key": `${data.service}:${data.windowStart}`,
         },
         body: JSON.stringify(payload),
+        // 응답 없는 webhook 에 묶여 있지 않게. 큐 경로는 throw → 재시도, degraded 경로는 실패 기록.
+        signal: AbortSignal.timeout(5_000),
       });
       if (!res.ok) throw new Error(`webhook responded ${res.status}`);
     } else {
@@ -60,6 +62,20 @@ export class AlertsService {
       threshold: data.threshold,
       windowMs: data.windowMs,
     });
+  }
+
+  /**
+   * Redis 다운 경로(degraded): 큐 없이 1회 발송. 재시도 없음 — 실패하면 attempts=1 로 기록.
+   * 호출부가 기다리지 않으므로 절대 throw 하지 않는다.
+   */
+  async dispatchDirect(data: AlertJobData): Promise<void> {
+    try {
+      await this.dispatch(data);
+    } catch (e) {
+      await this.recordFailure(data, String(e), 1).catch((e2: unknown) => {
+        this.logger.error(`alert failure record failed: service=${data.service} — ${String(e2)}`);
+      });
+    }
   }
 
   /** 재시도 소진 후 워커가 호출. 실패 이력을 별도 테이블에. */

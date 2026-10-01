@@ -10,6 +10,7 @@ import { DetectorService } from "./detector.service";
 
 const THRESHOLD = 10;
 const WINDOW = 60_000;
+const COOLDOWN_SEC = 300;
 const NOW = 1_700_000_000_000;
 const WINDOW_START = Math.floor(NOW / WINDOW) * WINDOW;
 
@@ -25,23 +26,33 @@ function makeDetector(fixedCount: number, acquire: boolean, now = NOW, healthy =
       return fixedCount;
     },
   };
-  const clock = { now: () => now } as Clock;
+  const clock = { now: () => now };
   const cooldown = { tryAcquire: async () => acquire } as unknown as CooldownService;
   const enqueueCalls: unknown[] = [];
+  const directCalls: unknown[] = [];
   const alerts = {
     enqueue: async (data: unknown) => {
       enqueueCalls.push(data);
     },
+    dispatchDirect: async (data: unknown) => {
+      directCalls.push(data);
+    },
   } as unknown as AlertsService;
-  const redisHealth = { healthy } as RedisHealthService;
+  const redisHealth = { healthy };
   const config = {
-    get: (key: keyof Env) => (key === "ALERT_THRESHOLD" ? THRESHOLD : WINDOW),
+    get: (key: keyof Env) =>
+      ({ ALERT_THRESHOLD: THRESHOLD, ALERT_WINDOW_MS: WINDOW, ALERT_COOLDOWN_SEC: COOLDOWN_SEC })[
+        key as string
+      ],
   } as unknown as ConfigService<Env, true>;
 
   return {
-    detector: new DetectorService(counter, clock, cooldown, alerts, redisHealth, config),
+    detector: new DetectorService(counter, clock as Clock, cooldown, alerts, redisHealth as RedisHealthService, config),
     recordCalls,
     enqueueCalls,
+    directCalls,
+    clock,
+    redisHealth,
     now,
     cooldown,
     alerts,
@@ -112,20 +123,38 @@ describe("DetectorService", () => {
     expect(String(log.mock.calls.at(-1)?.[0])).toContain("enqueued=false");
   });
 
-  it("Redis 다운(healthy=false)이면 임계값 초과여도 알림을 큐에 안 넣고 suppressed 로그만", async () => {
-    const { detector, enqueueCalls } = makeDetector(THRESHOLD + 1, true, NOW, false);
+  it("Redis 다운(healthy=false)이면 큐 대신 직접 발송한다 (degraded)", async () => {
+    const { detector, enqueueCalls, directCalls } = makeDetector(THRESHOLD + 1, true, NOW, false);
     await detector.check("checkout", Date.now());
 
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("threshold exceeded"));
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("alert suppressed: redis down"));
     expect(enqueueCalls).toHaveLength(0);
+    expect(directCalls).toEqual([expect.objectContaining({ service: "checkout", count: 11 })]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("alert degraded: redis down"));
 
     const line = String(log.mock.calls.at(-1)?.[0]);
     expect(line).toContain("path=db-fallback");
     expect(line).toContain("enqueued=false");
   });
 
-  it("Redis 다운이어도 임계값 이하면 suppressed 로그도 없다 (경로만 db-fallback)", async () => {
+  it("Redis 다운 중 메모리 cooldown: TTL 안엔 1건만, TTL 지나면 다시 발송", async () => {
+    const { detector, directCalls, clock } = makeDetector(THRESHOLD + 1, true, NOW, false);
+    await detector.check("checkout", Date.now());
+    await detector.check("checkout", Date.now());
+    expect(directCalls).toHaveLength(1);
+
+    await detector.check("payments", Date.now()); // 서비스별 독립
+    expect(directCalls).toHaveLength(2);
+
+    clock.now = () => NOW + COOLDOWN_SEC * 1000 - 1;
+    await detector.check("checkout", Date.now());
+    expect(directCalls).toHaveLength(2);
+
+    clock.now = () => NOW + COOLDOWN_SEC * 1000;
+    await detector.check("checkout", Date.now());
+    expect(directCalls).toHaveLength(3);
+  });
+
+  it("Redis 다운이어도 임계값 이하면 발송도 경고도 없다 (경로만 db-fallback)", async () => {
     const { detector } = makeDetector(THRESHOLD, true, NOW, false);
     await detector.check("checkout", Date.now());
 
@@ -133,26 +162,48 @@ describe("DetectorService", () => {
     expect(String(log.mock.calls.at(-1)?.[0])).toContain("path=db-fallback");
   });
 
-  it("cooldown 단계에서 Redis 가 실패하면 throw 없이 suppressed 로그 (Redis 다운과 동일)", async () => {
-    const { detector, cooldown, enqueueCalls } = makeDetector(THRESHOLD + 1, true);
-    cooldown.tryAcquire = () => Promise.reject(new Error("redis down"));
+  it("cooldown 단계에서 Redis 가 실패하면 throw 없이 직접 발송 (Redis 다운과 동일)", async () => {
+    const { detector, cooldown, enqueueCalls, directCalls } = makeDetector(THRESHOLD + 1, true);
+    cooldown.tryAcquire = () => Promise.reject(new Error("Command timed out"));
 
     await detector.check("checkout", Date.now());
 
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("alert suppressed: redis down"));
     expect(enqueueCalls).toHaveLength(0);
+    expect(directCalls).toHaveLength(1);
   });
 
-  it("enqueue 를 기다리지 않고, 나중에 실패하면 suppressed 로그만 남긴다", async () => {
-    const { detector, alerts } = makeDetector(THRESHOLD + 1, true);
+  it("enqueue 를 기다리지 않고, 나중에 실패하면 메모리 cooldown 확인 없이 직접 발송", async () => {
+    const { detector, alerts, directCalls, redisHealth } = makeDetector(THRESHOLD + 1, true);
+
+    // Redis 다운 경로로 메모리 cooldown 을 먼저 잡아둔다 (directCalls 1).
+    redisHealth.healthy = false;
+    await detector.check("checkout", Date.now());
+    expect(directCalls).toHaveLength(1);
+
+    redisHealth.healthy = true;
     let rejectEnqueue!: (e: Error) => void;
     alerts.enqueue = () => new Promise((_, reject) => (rejectEnqueue = reject));
-
     await detector.check("checkout", Date.now()); // 적재가 안 끝나도 resolve 돼야 한다
     expect(String(log.mock.calls.at(-1)?.[0])).toContain("enqueued=true");
+    expect(directCalls).toHaveLength(1);
 
+    // 큐 실패는 Redis cooldown 락을 이미 잡은 상태 → 메모리 cooldown 이 잡혀 있어도 발송한다.
     rejectEnqueue(new Error("queue down"));
     await new Promise(setImmediate);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("alert suppressed: enqueue failed"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("alert degraded: enqueue failed"));
+    expect(directCalls).toHaveLength(2);
+  });
+
+  it("enqueue 실패로 직접 발송하면 메모리 cooldown 도 잡혀 Redis 다운 경로가 중복 발송하지 않는다", async () => {
+    const { detector, alerts, directCalls, redisHealth } = makeDetector(THRESHOLD + 1, true);
+    alerts.enqueue = () => Promise.reject(new Error("queue down"));
+
+    await detector.check("checkout", Date.now());
+    await new Promise(setImmediate);
+    expect(directCalls).toHaveLength(1);
+
+    redisHealth.healthy = false;
+    await detector.check("checkout", Date.now());
+    expect(directCalls).toHaveLength(1);
   });
 });

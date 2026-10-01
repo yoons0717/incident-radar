@@ -5,7 +5,7 @@
 실시간 에러 모니터링·알림 서비스. 여러 앱이 에러를 보고하면(`POST /errors`) 서비스별
 최근 60초 에러 수를 세다가 임계값을 넘으면 webhook으로 알림을 발송한다. 중복 알림은
 cooldown으로 억제하고, 발송 실패는 지수 백오프로 재시도한다. Redis가 죽어도 감지는
-DB로 계속되고(알림 발송만 일시 정지), 대시보드로 실시간 상태를 볼 수 있다.
+DB로 계속되고(알림은 큐 없이 직접 발송으로 전환), 대시보드로 실시간 상태를 볼 수 있다.
 
 대시보드 — 서비스별 에러 추이, 활성 cooldown, 최근 알림(성공·실패 병합). 로그인 뒤에 있다.
 
@@ -45,11 +45,19 @@ flowchart LR
     Fallback --> Threshold
 
     Threshold -->|"no"| Done["로그만 남기고 종료"]
-    Threshold -->|"yes, Redis down"| Suppress["'alert suppressed' 로그\n(발송 skip)"]
+    Threshold -->|"yes, Redis down"| LocalCd{"메모리 cooldown\n획득?"}
     Threshold -->|"yes, Redis up"| Cooldown{"cooldown 락 획득?\nSET NX EX"}
 
     Cooldown -->|"no (이미 락 있음)"| SkipEnqueue["조용히 skip"]
     Cooldown -->|"yes"| Queue[("BullMQ alerts 큐")]
+    Cooldown -->|"Redis 오류"| LocalCd
+
+    LocalCd -->|"no"| SkipEnqueue
+    LocalCd -->|"yes"| Direct["직접 발송 (degraded)\n1회, 재시도 없음"]
+    Queue -->|"적재 실패"| Direct
+    Direct --> Alerts
+    Direct -->|"실패"| Failures
+    Direct -.->|"HTTP POST"| Webhook
 
     Queue --> Worker["AlertsProcessor"]
     Worker -->|"webhook 성공"| Alerts[("alerts 테이블")]
@@ -84,9 +92,20 @@ BullMQ 큐에 넣으면 재시도 상태가 Redis에 영속돼 재시작에도 �
 **Redis 다운 시 fail-open vs fail-close** — Redis가 죽었을 때 감지 자체를 멈추는 쪽
 (fail-close)이 더 "안전해" 보이지만, 알림 시스템에서는 그게 더 나쁘다 — 실제로 장애가
 난 서비스가 있어도 아무도 못 알게 된다. 그래서 이 프로젝트는 fail-open을 택한다:
-카운팅은 DB COUNT로 계속하고(감지는 살아있음), cooldown·BullMQ 발송만 건너뛴다(Redis가
-필요한 부분이라 어쩔 수 없음). 5초마다 Redis를 프로브해서 복구되면 자동으로 되돌아간다.
-이 규모에서는 healthy 불린 플래그로 충분하고, 풀 서킷 브레이커는 과하다.
+카운팅은 DB COUNT로 계속하고(감지는 살아있음), 발송은 Redis가 필요한 두 단계(cooldown
+락, BullMQ 큐)를 우회한다 — cooldown은 프로세스 메모리로, 큐 대신 webhook을 직접 1회
+호출한다(응답을 기다리지 않아 webhook이 느려도 수집은 막히지 않는다). 요청 도중 Redis가
+죽어도 같은 경로로 넘어가고, Redis 명령엔 500ms 타임아웃을 걸어 재연결을 기다리며 멈추지
+않는다. 5초마다 Redis를 프로브해서 복구되면 자동으로 되돌아간다. 이 규모에서는 healthy
+불린 플래그로 충분하고, 풀 서킷 브레이커는 과하다.
+
+degraded 발송이 포기하는 것:
+
+- **재시도 없음** — 큐가 없으므로 1회 시도, 실패하면 `alert_failures`에 기록(시도 1회)한다.
+- **다중 인스턴스** — 메모리 cooldown은 인스턴스마다 따로라, N대면 같은 장애에 최대 N건이 갈 수 있다.
+- **경로 전환 시점** — Redis cooldown과 메모리 cooldown은 서로를 모른다. Redis가 죽거나
+  살아나는 순간 같은 장애에 알림이 1건 더 갈 수 있다.
+- **프로세스 재시작·발송 중 종료** — 메모리 cooldown이 초기화되고, 진행 중이던 발송은 유실된다.
 
 **cooldown에 `SET key NX EX ttl`을 쓰는 이유** — "이미 cooldown 중인가"를 확인
 (`GET`)하고 아니면 설정(`SET`)하는 두 단계로 나누면, 그 사이에 다른 요청이 끼어들어

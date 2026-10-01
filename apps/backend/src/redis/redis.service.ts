@@ -15,7 +15,7 @@ export class RedisService implements OnModuleDestroy {
     this.client = new Redis(config.get("REDIS_URL", { infer: true }), {
       maxRetriesPerRequest: 3,
       // 응답 없는 명령(재연결 대기로 오프라인 큐에 쌓인 것 포함)을 빨리 실패시킨다.
-      // 실패하면 CounterSelector·DetectorService 가 DB 집계/발송 skip 으로 넘긴다.
+      // 실패하면 CounterSelector·DetectorService 가 DB 집계/degraded 직접 발송으로 넘긴다.
       commandTimeout: 500,
     });
   }
