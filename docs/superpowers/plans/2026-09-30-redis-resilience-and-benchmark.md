@@ -1,6 +1,6 @@
 # Redis 장애 대응 보강 + 성능 측정 계획
 
-작성일: 2026-09-30 · 상태: **확정 (2026-09-30 컨펌)** · 진행: Step 0 완료, Step 1 착수 전
+작성일: 2026-09-30 · 상태: **확정 (2026-09-30 컨펌)** · 진행: Step 1 완료, Step 2 착수 전
 
 ## 목적
 
@@ -164,6 +164,22 @@ ioredis는 `maxRetriesPerRequest: 3`으로 재시도한 뒤 실패하므로, 실
 ### 완료 조건
 - 재현 테스트가 "수정 전 실패 → 수정 후 통과"로 기록된다.
 - 기존 테스트가 전부 통과한다.
+
+### Step 1 결과 (2026-10-01)
+
+재현 테스트: `test/redis-midrequest.e2e-spec.ts`. 헬스 플래그는 실제 Redis 기준 `true`이고, Redis를 쓰는 단계 하나를 spy로 실패시키거나 무한 대기시킨다. 요청마다 1초 제한을 둔다.
+
+| 케이스 | 수정 전 | 수정 후 |
+|---|---|---|
+| 카운트 단계 Redis 실패 | 500 | 201 (DB로 다시 셈, 에러 행 11건) |
+| cooldown 단계 Redis 실패 | 500 | 201 (`alert suppressed` 로그) |
+| 알림 큐 적재 무한 대기 | 1초 타임아웃 | 201 (적재를 기다리지 않음) |
+
+- **`commandTimeout` 확인:** ioredis 5.11.1 소스상 `sendCommand`가 오프라인 큐에 넣기 전에 타임아웃을 건다. 그래서 대안 설정은 필요 없다. 테스트용 Redis를 `kill`한 뒤 직접 확인한 결과, MULTI와 `SET NX EX`는 503ms에 `Command timed out`으로 실패했고 PING은 8ms에 실패했다 (재시도 한도 초과).
+- 전체 테스트 108개, lint, typecheck가 통과했다. 유닛 테스트로 selector 폴백, cooldown 실패, enqueue 실패 로그, 플래그 전환 로그 케이스를 추가했다.
+- **Step 2로 넘기는 요구사항 (코드 리뷰 지적):** `commandTimeout`은 클라이언트 쪽에서만 포기한다. 그래서 Redis가 느린 경우에는 `SET NX EX`가 서버에서 실행됐는데 클라이언트는 실패로 받을 수 있다. 그러면 락 키가 남아서 이후 cooldown(300초) 동안 Redis 경로에서는 알림이 나가지 않는다. Step 2에서 cooldown 실패를 degraded 발송(메모리 cooldown + 직접 발송)으로 넘기면 이 경우에도 알림이 나간다. **Step 2 검증에 이 경우를 포함한다.**
+- ingest 로그의 `enqueued=true`는 이제 "적재 성공"이 아니라 "적재 시도"를 뜻한다. 적재 실패는 별도 `alert suppressed: enqueue failed` 로그로 구분한다.
+- **남은 것 (Step 3에서 확인):** 카운트가 요청 도중 DB로 폴백해도 `ingest` 로그의 `path` 라벨은 요청 시작 시점 기준이라 `redis`로 남는다.
 
 ---
 

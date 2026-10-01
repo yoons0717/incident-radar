@@ -19,6 +19,7 @@ export class RedisHealthService implements OnModuleInit, OnModuleDestroy {
 
   constructor(private readonly redis: RedisService) {
     this.redis.client.on("error", () => {
+      if (this._healthy) this.logger.warn("redis 에러 이벤트 — healthy=false");
       this._healthy = false;
     });
   }

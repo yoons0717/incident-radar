@@ -46,4 +46,14 @@ describe("CounterSelector", () => {
     expect(redisCounter.record).toHaveBeenCalledTimes(1);
     expect(dbCounter.record).toHaveBeenCalledTimes(1);
   });
+
+  it("healthy=true 인데 Redis 카운터가 실패하면 같은 호출 안에서 DB 로 다시 센다", async () => {
+    const { selector, redisCounter, dbCounter } = make(true);
+    redisCounter.record.mockRejectedValue(new Error("redis down"));
+
+    const n = await selector.record("checkout", 1_700_000_000_000);
+
+    expect(n).toBe(7);
+    expect(dbCounter.record).toHaveBeenCalledWith("checkout", 1_700_000_000_000);
+  });
 });

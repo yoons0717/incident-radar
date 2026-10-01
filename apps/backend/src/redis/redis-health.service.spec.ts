@@ -55,6 +55,17 @@ describe("RedisHealthService", () => {
     svc.onModuleDestroy();
   });
 
+  it("에러 이벤트로 true→false 가 될 때 경고 로그를 한 번만 남긴다", async () => {
+    const { svc, fireError } = make(() => Promise.resolve("PONG"));
+    await svc.onModuleInit();
+
+    fireError();
+    fireError();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("healthy=false"));
+    svc.onModuleDestroy();
+  });
+
   it("다운 상태에서 다음 주기 PING 이 성공하면 healthy=true 로 복구", async () => {
     jest.useFakeTimers();
     try {

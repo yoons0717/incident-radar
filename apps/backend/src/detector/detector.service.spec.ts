@@ -43,6 +43,8 @@ function makeDetector(fixedCount: number, acquire: boolean, now = NOW, healthy =
     recordCalls,
     enqueueCalls,
     now,
+    cooldown,
+    alerts,
   };
 }
 
@@ -129,5 +131,28 @@ describe("DetectorService", () => {
 
     expect(warn).not.toHaveBeenCalled();
     expect(String(log.mock.calls.at(-1)?.[0])).toContain("path=db-fallback");
+  });
+
+  it("cooldown 단계에서 Redis 가 실패하면 throw 없이 suppressed 로그 (Redis 다운과 동일)", async () => {
+    const { detector, cooldown, enqueueCalls } = makeDetector(THRESHOLD + 1, true);
+    cooldown.tryAcquire = () => Promise.reject(new Error("redis down"));
+
+    await detector.check("checkout", Date.now());
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("alert suppressed: redis down"));
+    expect(enqueueCalls).toHaveLength(0);
+  });
+
+  it("enqueue 를 기다리지 않고, 나중에 실패하면 suppressed 로그만 남긴다", async () => {
+    const { detector, alerts } = makeDetector(THRESHOLD + 1, true);
+    let rejectEnqueue!: (e: Error) => void;
+    alerts.enqueue = () => new Promise((_, reject) => (rejectEnqueue = reject));
+
+    await detector.check("checkout", Date.now()); // 적재가 안 끝나도 resolve 돼야 한다
+    expect(String(log.mock.calls.at(-1)?.[0])).toContain("enqueued=true");
+
+    rejectEnqueue(new Error("queue down"));
+    await new Promise(setImmediate);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("alert suppressed: enqueue failed"));
   });
 });

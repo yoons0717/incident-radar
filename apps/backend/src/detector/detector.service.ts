@@ -45,18 +45,37 @@ export class DetectorService {
       this.logger.warn(
         `threshold exceeded: service=${service} count=${count} window=${this.windowMs}ms`,
       );
-      if (!healthy) {
+      let redisDown = !healthy;
+      let acquired = false;
+      if (healthy) {
+        try {
+          acquired = await this.cooldown.tryAcquire(service);
+        } catch (e) {
+          // 플래그는 true 인데 요청 도중 Redis 가 죽은 경우 → Redis 다운과 같이 취급.
+          // 타임아웃이면 서버엔 락이 잡혔을 수 있다 → 이후 cooldown 동안 Redis 경로는 조용하다.
+          this.logger.warn(`cooldown failed (service=${service}) — ${String(e)}`);
+          redisDown = true;
+        }
+      }
+      if (redisDown) {
         // Redis 다운 중엔 cooldown·BullMQ 를 못 쓴다 → 발송 건너뛰고 감지·로깅만 계속.
         this.logger.warn(`alert suppressed: redis down (service=${service} count=${count})`);
-      } else if (await this.cooldown.tryAcquire(service)) {
+      } else if (acquired) {
         // cooldown 락을 잡은 요청만 알림을 낸다 (나머지는 조용히 skip → 알림 폭풍 억제).
-        await this.alerts.enqueue({
-          service,
-          count,
-          threshold: this.threshold,
-          windowMs: this.windowMs,
-          windowStart: Math.floor(now / this.windowMs) * this.windowMs,
-        });
+        // 적재를 기다리지 않는다: BullMQ 연결이 재연결 중이면 add 가 실패 대신 수 초 대기한다.
+        this.alerts
+          .enqueue({
+            service,
+            count,
+            threshold: this.threshold,
+            windowMs: this.windowMs,
+            windowStart: Math.floor(now / this.windowMs) * this.windowMs,
+          })
+          .catch((e: unknown) => {
+            this.logger.warn(
+              `alert suppressed: enqueue failed (service=${service} count=${count}) — ${String(e)}`,
+            );
+          });
         enqueued = true;
       }
     }
