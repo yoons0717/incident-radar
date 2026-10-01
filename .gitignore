@@ -30,3 +30,6 @@ coverage/
 
 # Playwright MCP 캡처 부산물
 .playwright-mcp/
+
+# 부하 측정 결과 원본 (tools/bench)
+tools/bench/out*/

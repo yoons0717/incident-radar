@@ -1,0 +1,6 @@
+# 측정 전용 override. 부하가 429 에 막히지 않게 레이트리밋을 풀고, 외부 webhook 호출을 끈다.
+services:
+  backend:
+    environment:
+      RATE_LIMIT_PER_MIN: "1000000000"
+      WEBHOOK_URL: ""

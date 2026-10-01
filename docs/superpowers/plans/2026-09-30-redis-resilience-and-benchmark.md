@@ -1,6 +1,6 @@
 # Redis 장애 대응 보강 + 성능 측정 계획
 
-작성일: 2026-09-30 · 상태: **확정 (2026-09-30 컨펌)** · 진행: Step 2 완료, Step 3 착수 전
+작성일: 2026-09-30 · 상태: **확정 (2026-09-30 컨펌)** · 진행: Step 3 완료
 
 ## 목적
 
@@ -147,7 +147,7 @@ ioredis는 `maxRetriesPerRequest: 3`으로 재시도한 뒤 실패하므로, 실
 3. **빨리 실패 (A):** 앱 Redis 클라이언트(`redis/redis.service.ts`)에 `commandTimeout`(약 500ms)을 설정한다. 응답 없는 명령은 재연결을 기다리지 않고 바로 실패하고, 1·2번이 이를 받아 DB/degraded로 넘긴다.
    - **먼저 확인할 것:** 연결이 끊겨 오프라인 큐에서 대기 중인 명령에도 타임아웃이 적용되는가. 적용되지 않으면 대안(끊긴 동안 명령을 즉시 거부하는 설정)을 검토한다.
 4. **enqueue를 기다리지 않음 (B):** 큐 적재 결과를 기다리지 않고 응답한다. BullMQ가 나중에 재연결에 성공하면 알림은 정상 경로로 나간다.
-   - 적재가 실패하면 catch에서 처리한다. Step 1 시점에는 `alert suppressed` 로그를 남기고, Step 2 이후에는 `dispatch()`를 직접 호출한다. 이때는 Redis cooldown 락을 이미 잡은 상태이므로 메모리 cooldown을 다시 확인하지 않는다.
+   - 적재가 실패하면 catch에서 처리한다. Step 1 시점에는 `alert suppressed` 로그를 남기고, Step 2 이후에는 `dispatch()`를 직접 호출한다. 이때는 Redis cooldown 락을 이미 잡은 상태이므로 메모리 cooldown을 다시 확인하지 않는다. (→ 2026-10-01 결정 7로 변경: 확인한다)
    - 기다리지 않는 적재가 쌓일 걱정은 없다. 적재는 cooldown 락을 잡은 요청만 하므로 서비스당 cooldown 기간(기본 300초)에 1건이다.
    - 세션 저장소(node-redis 별도 연결)는 `POST /errors`가 쓰지 않으므로 대상이 아니다.
 5. **플래그 전환 로그:** ioredis 에러 이벤트로 플래그가 `true`에서 `false`로 바뀔 때도 경고 로그를 남긴다 (Step 0 발견 5).
@@ -201,7 +201,7 @@ detector → cooldown 락 (Redis) → 알림 큐 (BullMQ/Redis) → 워커 → d
 실제로 webhook을 보내는 `AlertsService.dispatch()`는 fetch와 Postgres만 쓰고 **Redis를 쓰지 않는다.** 당시에는 Redis 없이 webhook을 따로 연결하는 게 번거롭다고 판단했다. 하지만 이미 있는 `dispatch()`를 재사용하면 새로 연결할 것이 없다.
 
 ### 해결 방안
-Redis 다운 경로(헬스 플래그가 `false`이거나, Step 1에서 cooldown 실패로 넘어온 경우)에서만 아래처럼 동작한다. 큐 적재 실패로 넘어온 경우는 Step 1의 4번대로 cooldown 없이 바로 발송한다. **Redis 정상 경로는 바꾸지 않는다.**
+Redis 다운 경로(헬스 플래그가 `false`이거나, Step 1에서 cooldown 실패로 넘어온 경우)에서만 아래처럼 동작한다. 큐 적재 실패로 넘어온 경우는 Step 1의 4번대로 cooldown 없이 바로 발송한다 (→ 결정 7로 변경: 메모리 cooldown을 확인한다). **Redis 정상 경로는 바꾸지 않는다.**
 
 ```
 detector → cooldown 락 (메모리) → dispatch() 직접 호출
@@ -248,7 +248,7 @@ detector → cooldown 락 (메모리) → dispatch() 직접 호출
 - **degraded 경로로 넘어가는 경우 3가지**
   - 헬스 플래그가 `false`: 메모리 cooldown을 확인한다.
   - cooldown 단계의 Redis 실패: 메모리 cooldown을 확인한다. Step 1 리뷰에서 지적한 "타임아웃으로 서버에 락이 남는 경우"가 여기에 해당한다.
-  - 큐 적재 실패: 메모리 cooldown을 확인하지 않는다.
+  - 큐 적재 실패: 메모리 cooldown을 확인하지 않는다. (→ 결정 7로 변경)
 - **테스트를 먼저 작성:** 수정 전에 5건이 실패했다. `dispatchDirect`가 없었고, degraded 경로가 없었고, fallback e2e의 알림이 0건이었다. 수정 후에는 전체 111개 테스트와 lint, typecheck가 통과했다. `--forceExit` 없이도 정상 종료한다.
 - **fallback e2e:** 기대값을 "알림 0건"에서 "알림 정확히 1건, degraded 로그 1회"로 바꿨다.
 - **수동 확인:** dev compose의 Redis를 `kill`하고 7초 뒤 `/health`가 `degraded`가 된 것을 확인했다. 그 상태에서 같은 서비스로 15건을 보냈다.
@@ -282,7 +282,43 @@ detector → cooldown 락 (메모리) → dispatch() 직접 호출
 ### 완료 조건
 - README에 전후 비교표가 있고, 누구나 같은 방법으로 재현할 수 있다.
 
+### Step 3 진행 기록 (2026-10-01)
+
+- **스크립트:** `tools/bench/run.sh`(측정), `summarize.mjs`(표와 타임라인), `bench.override.yml`.
+  - 타임라인은 pino-http access log(요청별 상태 코드와 응답 시간)와 `ingest` 로그로 만든다.
+- **1차 측정에서 알림 수가 기대(③ 3건)와 다르게 나왔다.** 원인은 두 가지였다.
+  1. **스크립트 결함:** 회차 사이에 백엔드를 재시작하지 않아서, 메모리 cooldown이 다음 회차로 넘어갔다. 그래서 ② 2·3회차의 알림이 0건이었다. → `reset()`에서 백엔드를 재시작하도록 고쳤다.
+  2. **실제 동작:** 타임아웃된 명령이 Redis 복구 후 다시 실행됐다.
+     - 근거: 복구 직후 첫 카운트가 1이 아니라 7이었고, 임계값을 넘어도 cooldown 락을 잡지 못했다.
+     - 원인: ioredis는 전송했지만 응답을 못 받은 채 연결이 끊긴 명령을 `prevCommandQueue`에 모아둔다. 그리고 재연결 때 다시 보낸다(`autoResendUnfulfilledCommands` 기본값 true). promise가 `commandTimeout`으로 이미 실패 처리됐어도 다시 보내고, `maxRetriesPerRequest`의 flush 대상도 아니다.
+     - 결과: 타임아웃으로 실패 처리한 `SET cooldown NX EX 300`이 복구 직후 실행된다. 그러면 Redis 경로의 알림이 cooldown 동안 막힌다.
+     - 처음엔 `enableOfflineQueue: false`를 검토했다. 그런데 재실행은 오프라인 큐가 아니라 "전송 후 응답 대기 중" 큐에서 일어난다는 게 확인됐다. 게다가 `enableOfflineQueue: false`는 첫 연결 전 명령을 즉시 실패시키는 부작용도 있었다. 그래서 `autoResendUnfulfilledCommands: false`로 정했다.
+     - 재현(테스트용 Redis): `pause` → SET 전송 → `kill` → `unpause` → `start` 순서로 실행했다.
+       - 기본값: 클라이언트는 500ms 타임아웃으로 실패했는데, 복구 후 키가 **존재**했다.
+       - `false`: 복구 후 키가 **없었다**.
+     - CI에서는 컨테이너 pause/kill이 불안정해서 수동 검증으로 남긴다.
+- **2차 측정 무효:** Step 2 수동 확인 때 띄운 호스트 `pnpm dev`(nest watch)가 남아 있었다. 그 watcher가 `redis.service.ts`를 고치자 앱을 다시 띄웠고, `localhost:3000`이 컨테이너가 아니라 이 프로세스로 갔다. dev 설정이라 레이트리밋이 600/분이어서 600건 이후는 전부 429였다. 프로세스를 정리하고 다시 쟀다. README의 재현 방법에 "포트 3000을 쓰는 다른 프로세스를 먼저 끈다"를 적었다.
+- **Step 0 수치와 비교할 수 없다:** 회차마다 백엔드를 재시작하자, 같은 코드에서도 ① RPS가 732에서 1037로 바뀌었다. 조건 차이가 코드 차이와 섞이는 것이다. → 수정 전 코드(`61c2207`)를 git worktree에서 같은 스크립트로 다시 쟀다. README의 전후 비교는 이 수치를 쓴다.
+
+### Step 3 결과 (2026-10-01, 같은 스크립트·같은 조건)
+
+| 시나리오 | 중앙값 RPS (전 → 후) | p99 | max | 실패 (회차별) | 알림 (회차별) |
+|---|---|---|---|---|---|
+| ① 정상 | 936 → 1037 | 104 → 99ms | 425 → 348ms | 0/0/0 → 0/0/0 | 1/1/1 → 1/1/1 |
+| ② Redis 다운 | 622 → 643 | 136 → 126ms | 462 → 341ms | 50/0/0 → 0/0/0 | 0/0/0 → 1/1/1 |
+| ③ 부하 중 kill | 752 → 672 | 131 → 162ms | 4.6s → 1.1s | 2/5/100 → 0/0/0 | 2/2/2 → 3/3/3 |
+
+- ③의 알림 시각(kill 기준)
+  - 수정 전: 약 -8초, +18초. 장애 구간에는 0건이었다.
+  - 수정 후: 3회 모두 약 -8초, +0.2초, +18초다. 계획에서 예상한 3건과 일치한다.
+  - +18초 알림은 복구(+10초) 후 BullMQ 워커가 재연결되고 나서 저장된 것이다.
+- 수정 전 ③ 3회차의 실패 100건은 복구 시점(+10초)에 500이 50건, 클라이언트 타임아웃이 50건이었다. 수정 후에는 모든 초에서 5xx가 0건이다.
+- ① 정상의 약 10% 차이와 ③의 RPS 감소(752 → 672)는 원인을 확인하지 않았다. 정상 경로는 거의 바뀌지 않았으므로 README에 개선으로 쓰지 않는다.
+
 ### 재현 조건 (Step 0 실측 기준)
+
+> Step 3부터는 `tools/bench/run.sh`가 재현 조건 그 자체다. 아래와 달라진 점이 두 가지 있다. 회차마다 백엔드를 재시작하고(대기는 `/health`가 `ok`가 될 때까지), 타임라인을 ExceptionsHandler 로그 대신 pino-http access log(상태 코드, 응답 시간)로 만든다.
+
 - colima 2 CPU / 4GB. `docker compose` 풀스택(postgres, redis, backend)을 production 빌드로 실행한다.
 - 측정 전용 compose override: backend에 `RATE_LIMIT_PER_MIN=1000000000`, `WEBHOOK_URL=` (빈 값) 두 개만 덮어쓴다.
 - API 키: `docker compose exec backend pnpm seed:api-key bench`
@@ -310,6 +346,17 @@ detector → cooldown 락 (메모리) → dispatch() 직접 호출
 
 1. ~~degraded 발송을 기다리지 않는 방식(fire-and-forget)으로 해도 되는가?~~ → **결정: 예.** 장애 상황에서 webhook이 느려도 수집 응답이 막히지 않게 하기 위해서다. 정상 모드도 이미 "큐에 넣고 바로 응답"하므로 같은 원칙을 유지하는 것이기도 하다. 대가는 발송 중 프로세스가 죽으면 그 알림이 유실된다는 점이다.
 2. ~~측정 원본 출력을 레포에 남길 것인가?~~ → **결정: README 표 + 재현 방법만 남긴다.**
+   - **변경 (2026-10-01):** 측정 스크립트(`tools/bench/`)는 레포에 넣는다. 결과 원본(`tools/bench/out/`)은 계속 넣지 않는다 (`.gitignore`). 처음엔 스크립트도 세션 임시 폴더에만 두었는데, 세션이 끝나며 사라져서 Step 3에서 다시 작성해야 했기 때문이다.
 3. ~~작업 방식~~ → **결정: 브랜치 + PR.**
 4. ~~이 계획 문서를 커밋할 것인가?~~ → 처음엔 미커밋으로 정했다가 **변경: 커밋한다** (2026-09-30). 시각 자료 사본(`2026-09-30-redis-bench-report.html`)도 함께 커밋한다.
 5. ~~Step 0에서 발견한 "느린 실패"와 "큐 적재 대기"를 Step 1에 넣을 것인가?~~ → **결정: 둘 다 넣는다** (A: `commandTimeout`, B: enqueue 기다리지 않음).
+6. ~~재측정 중 발견한 "타임아웃된 명령이 복구 후 재실행되는 문제"를 고칠 것인가?~~ → **결정: 고친다** (2026-10-01). 옵션은 `autoResendUnfulfilledCommands: false`. 아래 Step 3 진행 기록 참고.
+7. ~~큐 적재가 실패했을 때 메모리 cooldown을 확인할 것인가?~~ → **결정: 확인한다** (2026-10-01, 브랜치 전체 코드 리뷰 지적).
+   - 재현 순서
+     1. 요청 A가 Redis 락을 잡고 적재를 시작한다. BullMQ 연결은 빠른 실패 설정이 없어서 적재가 오래 멈춘다.
+     2. 그 사이 Redis가 죽는다. 요청 B가 degraded로 1건을 보낸다.
+     3. 나중에 A의 적재가 실패하면 catch가 1건을 더 보낸다. 늦게, 오래된 count로 간다.
+   - 메모리 cooldown이 잡혀 있다는 건 최근 cooldown 안에 이미 알림이 나갔다는 뜻이다. 그러니 건너뛰는 게 cooldown의 의미와 맞다.
+   - 단위 테스트로 재현했다 (수정 전 2건 → 수정 후 1건).
+   - 복구 후 멈춰 있던 잡이 늦게 실행되는 경우는 여전히 "경로 전환 시점" 한계에 남는다.
+   - BullMQ 연결에 짧은 타임아웃을 주는 대안은 워커 동작에도 영향을 줘서 범위 밖으로 둔다.
