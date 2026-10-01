@@ -33,3 +33,7 @@ coverage/
 
 # 부하 측정 결과 원본 (tools/bench)
 tools/bench/out*/
+
+# Playwright 산출물
+playwright-report/
+test-results/

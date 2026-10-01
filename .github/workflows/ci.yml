@@ -25,3 +25,31 @@ jobs:
       # backend 의 test 스크립트가 docker-compose.test.yml 로 Postgres·Redis 를
       # 띄우고 마이그레이션까지 실행한다 (ubuntu-latest 러너에 Docker 기본 설치됨).
       - run: pnpm test
+
+  # 브라우저 + Next 서버 + 백엔드 + DB 가 맞물리는 핵심 흐름(로그인·알림 표시·로그아웃).
+  # 빌드가 두 번 들어가 느려서 위 job 과 병렬로 따로 돈다.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @incident-radar/frontend exec playwright install --with-deps chromium
+      - run: pnpm --filter @incident-radar/frontend test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/frontend/playwright-report
+            apps/frontend/test-results
