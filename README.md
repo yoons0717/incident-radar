@@ -40,6 +40,7 @@ flowchart LR
     Detector --> Health{"Redis healthy?"}
     Health -->|"yes"| Sliding["Redis 슬라이딩 윈도우\n(Sorted Set)"]
     Health -->|"no"| Fallback["DB COUNT fallback"]
+    Sliding -.->|"Redis 오류"| Fallback
 
     Sliding --> Threshold{"count > 임계값?"}
     Fallback --> Threshold
@@ -82,10 +83,10 @@ flowchart LR
 **BullMQ + 지수 백오프 + 실패 테이블 vs 인프로세스 재시도** — webhook 호출을 그 자리에서
 `await`+`retry`로 처리하면 프로세스가 재시작될 때 진행 중이던 재시도가 그냥 사라진다.
 BullMQ 큐에 넣으면 재시도 상태가 Redis에 영속돼 재시작에도 살아남고, 재시도 사이 대기도
-이벤트 루프를 막지 않는다. 재시도는 최초 1회+재시도 4회(총 5회), 간격 1·2·4·8초(지수)에
+이벤트 루프를 막지 않는다. webhook 호출엔 5초 타임아웃을 걸어 응답 없는 수신처에 묶여 있지
+않고 실패로 넘긴다. 재시도는 최초 1회+재시도 4회(총 5회), 간격 1·2·4·8초(지수)에
 지터로 대기시간을 0~20% 줄여 여러 잡이 같은 타이밍에 몰려 재시도하는 걸 피한다. 5회 다
-실패하면 `alerts`와 별도로
-`alert_failures` 테이블에 페이로드·에러·시도 횟수를 남긴다 — `alerts` 스키마를 널 허용
+실패하면 `alerts`와 별도로 `alert_failures` 테이블에 페이로드·에러·시도 횟수를 남긴다 — `alerts` 스키마를 널 허용
 필드로 늘리는 대신 성공/실패를 테이블로 나눠서 "발송 실패만 전부 조회" 같은 질의가
 간단해진다.
 
@@ -95,8 +96,10 @@ BullMQ 큐에 넣으면 재시도 상태가 Redis에 영속돼 재시작에도 �
 카운팅은 DB COUNT로 계속하고(감지는 살아있음), 발송은 Redis가 필요한 두 단계(cooldown
 락, BullMQ 큐)를 우회한다 — cooldown은 프로세스 메모리로, 큐 대신 webhook을 직접 1회
 호출한다(응답을 기다리지 않아 webhook이 느려도 수집은 막히지 않는다). 요청 도중 Redis가
-죽어도 같은 경로로 넘어가고, Redis 명령엔 500ms 타임아웃을 걸어 재연결을 기다리며 멈추지
-않는다. 5초마다 Redis를 프로브해서 복구되면 자동으로 되돌아간다. 이 규모에서는 healthy
+죽어도 같은 경로로 넘어간다. Redis 명령에는 500ms 타임아웃을 걸어, 재연결을 기다리느라
+요청이 멈추지 않게 했다. 타임아웃된 명령은 재연결 후 다시 보내지 않는다. ioredis는 기본적으로
+다시 보내는데, 측정 중에 타임아웃된 cooldown 락이 Redis 복구 직후 실행돼 이후 알림을 막는
+것을 발견해서 껐다. 5초마다 Redis를 프로브해서 복구되면 자동으로 되돌아간다. 이 규모에서는 healthy
 불린 플래그로 충분하고, 풀 서킷 브레이커는 과하다.
 
 degraded 발송이 포기하는 것:
@@ -136,25 +139,28 @@ Redis가 정상일 때, 죽어 있을 때, 부하 도중 죽을 때 `POST /error
 - 회차마다 Redis·DB를 비우고 백엔드를 재시작한다. 시나리오당 3회, 중앙값.
 - 시나리오: ① 정상 / ② Redis를 죽이고 7초 뒤 부하 / ③ 부하 약 8초 지점에 Redis kill, 10초 뒤 start.
 
-| 시나리오 | 중앙값 RPS | p99 | max | 실패 (회차별) | 알림 (회차별) |
+| 시나리오 | 중앙값 RPS | p99 | max | 실패 (회차별) | 알림 (회차당, 3회 동일) |
 | --- | --- | --- | --- | --- | --- |
 | ① 정상 | 936 → 1037 | 104 → 99ms | 425 → 348ms | 0 / 0 / 0 → 0 / 0 / 0 | 1 → 1 |
 | ② Redis 다운 | 622 → 643 | 136 → 126ms | 462 → 341ms | **50** / 0 / 0 → 0 / 0 / 0 | **0** → 1 |
 | ③ 부하 중 kill | 752 → 672 | 131 → 162ms | **4.6s** → 1.1s | **2 / 5 / 100** → 0 / 0 / 0 | 2 → 3 |
 
-실패 = 2xx가 아닌 응답 + 클라이언트 에러(10초 타임아웃 포함). 이번 측정에서 4xx는 0건이었다. 지연은 중앙값 RPS 회차의 값.
+실패 = 2xx가 아닌 응답 + 클라이언트 에러(10초 타임아웃 포함). 이번 측정에서 4xx는 0건이었다.
+지연은 중앙값 RPS 회차의 값.
 
 - **③ 장애 순간:** 수정 전엔 Redis가 죽는 순간 처리 중이던 요청이 500을 받거나, Redis가
-  다시 뜰 때까지 멈췄다가 실패했다(3회차는 복구 시점에 500 50건 + 타임아웃 50건). 수정
-  후엔 Redis 명령 500ms 타임아웃 → 같은 요청 안에서 DB 폴백으로 넘어가 실패 0건이다.
+  다시 뜰 때까지 멈췄다가 실패했다(3회차는 복구 시점에 500 50건, 타임아웃 50건). 수정
+  후엔 Redis 명령이 500ms 안에 실패하고 같은 요청 안에서 DB로 다시 세기 때문에 실패가 0건이다.
 - **알림:** ③의 알림 시각(kill 기준)은 수정 전 약 -8초·+18초, 수정 후 약 -8초·**+0.2초**·+18초다.
   수정 전엔 Redis가 죽어 있는 동안 알림이 한 건도 안 나갔고, 수정 후엔 degraded 발송이
-  장애 구간에 1건을 낸다. ②도 0건 → 1건.
-- **DB 폴백 비용:** ② 처리량은 ① 대비 약 33~38% 낮다(요청마다 최근 60초 COUNT 쿼리). 수정 후 ② 3회차(463)는 다른 두 회차(663·643)보다 낮게 나왔다.
-- ①의 약 10% 차이와 ③의 RPS 감소는 원인을 확인하지 않았다 — 정상 경로는 거의 바뀌지
-  않았으므로 개선이라고 주장하지 않는다.
+  장애 구간에 1건을 낸다. ②도 0건에서 1건이 됐다.
+- **DB 폴백 비용:** ② 처리량은 ① 대비 약 33~38% 낮다(요청마다 최근 60초 COUNT 쿼리).
+  수정 후 ② 3회차(463)는 다른 두 회차(663·643)보다 낮게 나왔다.
+- ①은 약 10% 높게 나왔지만 정상 경로는 거의 바뀌지 않아서 개선으로 보지 않는다. ③의 RPS
+  감소(752 → 672)와 함께 원인은 확인하지 않았다.
 
-재현 (Docker 필요, 약 12분. 포트 3000을 쓰는 다른 프로세스 — `pnpm dev` 등 — 는 먼저 끈다):
+재현하려면 Docker가 필요하고 약 12분 걸린다. 포트 3000을 쓰는 다른 프로세스(`pnpm dev` 등)는
+먼저 끈다. 부하가 컨테이너가 아닌 곳으로 가면 `summarize.mjs`가 에러로 알려준다.
 
 ```bash
 ./tools/bench/run.sh                    # 결과 원본은 tools/bench/out/ (커밋 안 함)
@@ -197,14 +203,17 @@ pnpm --filter @incident-radar/tools sim -- --spike checkout
 
 ### webhook 실제로 붙여보기 (선택, Discord)
 
-`WEBHOOK_URL`에 아무 URL이나 넣으면 워커가 그리로 제네릭 JSON을 POST 한다(§설계 근거).
+`WEBHOOK_URL`에 아무 URL이나 넣으면 알림을 그 주소로 POST 한다. 본문은 특정 서비스에 맞추지
+않은 JSON이다. 평소엔 큐 워커가 보내고, Redis 다운 중엔 degraded 경로가 직접 보낸다(§설계 근거).
 Discord webhook API는 `content`/`embeds` 필드가 있는 body를 요구해 그대로는 안 맞으므로,
 `tools/discord-relay.ts`가 그 사이에서 포맷만 변환해주는 어댑터 역할을 한다 — 코어
 알림 로직은 Discord를 몰라도 된다.
 
 ```bash
-# .env 에 DISCORD_WEBHOOK_URL(Discord 채널 설정 → 연동 → 웹후크)을 채우고 WEBHOOK_URL=http://localhost:8787
-pnpm --filter @incident-radar/tools relay   # :8787, DISCORD_WEBHOOK_URL 로 포워드
+# .env 에 WEBHOOK_URL=http://localhost:8787 (백엔드가 relay 로 보내게)
+# relay 는 .env 를 읽지 않으므로 Discord 웹후크 주소(채널 설정 → 연동 → 웹후크)는 셸로 넘긴다
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/... \
+  pnpm --filter @incident-radar/tools relay   # :8787, Discord 로 포워드
 ```
 
 ![Discord 알림](docs/images/discord-alert.jpg)
@@ -245,7 +254,7 @@ curl -b cookies.txt -X POST http://localhost:3000/api-keys \
 - `POST /errors` (수집) → `Authorization: Bearer <API 키>`. 키는 admin 이
   `POST /api-keys` 또는 `pnpm --filter backend seed:api-key <이름>` 으로 발급하고,
   평문은 발급 시 1회만 노출된다(DB엔 sha256 해시). `RATE_LIMIT_PER_MIN`(기본 600) IP
-  레이트리밋도 함께 걸린다 — 부하테스트는 이 값을 올린다.
+  레이트리밋도 함께 걸린다 — 부하 측정은 이 값을 올린다(`tools/bench/bench.override.yml`).
 - `GET /errors`·`/stats`·`/status`·`/alerts`·`/auth/me` (조회) → 로그인 세션 쿠키.
   `POST /auth/login` 이 세션을 만들고(Redis 저장), `/auth/logout` 이 즉시 무효화한다.
   로그인은 무차별 대입 방지로 분당 10회로 제한된다.
@@ -258,3 +267,13 @@ pnpm test        # 전체 워크스페이스 (백엔드는 docker-compose.test.y
 pnpm lint
 pnpm typecheck
 ```
+
+백엔드 e2e는 실제 Postgres·Redis로 돈다. Redis 장애는 두 경우로 나눠 검증한다. 처음부터
+다운인 경우(`test/fallback.e2e-spec.ts`, 헬스 플래그를 내려 둠)와, 요청 도중 Redis 호출이
+실패하거나 멈추는 경우(`test/redis-midrequest.e2e-spec.ts`)다. 부하·장애
+측정은 §성능·장애 테스트의 `tools/bench`로 따로 돌린다(Docker 필요, CI 밖).
+
+## 개발 방식
+
+AI 페어 프로그래밍(Claude Code)으로 구현했다. 설계 결정과 트레이드오프 판단은 직접 했고,
+결정 과정은 `docs/specs`·`docs/plans`에 남아 있다.

@@ -3,7 +3,7 @@
 태스크 단위로 진행. 각 태스크는 독립 검증 가능한 산출물로 끝난다. 코드는 넣지
 않는다 — 무엇을 할지·어떻게 확인할지·짚을 개념만. 커밋은 태스크마다.
 
-**스펙:** `docs/superpowers/specs/2026-08-30-incident-radar-design.md` (함께 읽는다)
+**스펙:** `docs/specs/2026-08-30-incident-radar-design.md` (함께 읽는다)
 
 ## 전역 제약 (모든 태스크에 적용)
 

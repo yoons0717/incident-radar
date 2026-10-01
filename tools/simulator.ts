@@ -30,7 +30,7 @@ const SERVICES = [
 ] as const;
 const TOTAL_WEIGHT = SERVICES.reduce((s, x) => s + x.weight, 0);
 
-// ponytail: 백엔드 기본 ALERT_THRESHOLD=10 을 넘기려는 값. 임계값을 바꿨으면 여기도.
+// 단순화: 백엔드 기본 ALERT_THRESHOLD=10 을 넘기려는 값. 임계값을 바꿨으면 여기도.
 const SPIKE_BURST = 15;
 
 // POST /errors 인증용. `pnpm --filter backend seed:api-key sim` 로 발급 후 export.

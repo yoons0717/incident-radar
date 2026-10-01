@@ -11,7 +11,7 @@ import { RedisService } from "./redis.service";
 @Injectable()
 export class RedisHealthService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RedisHealthService.name);
-  // ponytail: 5s 고정. 튜닝할 일이 거의 없어 env 로 빼지 않는다.
+  // 단순화: 5s 고정. 튜닝할 일이 거의 없어 env 로 빼지 않는다.
   private static readonly PING_INTERVAL_MS = 5_000;
 
   private _healthy = true;

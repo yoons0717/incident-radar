@@ -19,7 +19,7 @@ export class DetectorService {
   private readonly threshold: number;
   private readonly windowMs: number;
   private readonly cooldownMs: number;
-  // ponytail: 프로세스 메모리 cooldown — 인스턴스 N대면 최대 N건 중복, 재시작 시 초기화 (README 한계 참고).
+  // 단순화: 프로세스 메모리 cooldown — 인스턴스 N대면 최대 N건 중복, 재시작 시 초기화 (README 한계 참고).
   // 만료 항목을 지우지 않는다: 키는 임계값을 넘은 서비스 이름뿐이라 작다. 서비스 수가 커지면 만료 시 삭제.
   private readonly localCooldownUntil = new Map<string, number>();
 

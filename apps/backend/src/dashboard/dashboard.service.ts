@@ -43,7 +43,7 @@ export class DashboardService {
     // 정밀도 차이로 `< to` 에서 빠질 수 있다(레이스) — "지금 존재하는 건 다 포함"이 맞기도 하다.
     const to = q.to ? new Date(q.to) : null;
     const from = q.from ? new Date(q.from) : new Date((to ?? new Date()).getTime() - DEFAULT_RANGE_MS);
-    // ponytail: bucket 은 스키마에서 10~3600 정수로 클램프됨 → SQL 에 인라인해도 안전(주입 아님).
+    // 단순화: bucket 은 스키마에서 10~3600 정수로 클램프됨 → SQL 에 인라인해도 안전(주입 아님).
     const bucket = q.bucket;
 
     const qb = this.errorLogs

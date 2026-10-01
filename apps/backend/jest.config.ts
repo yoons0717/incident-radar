@@ -12,7 +12,7 @@ const config: Config = {
   watchman: false,
   // unit(카운터)·e2e(디텍터) 가 같은 테스트 Redis 를 쓰고 afterEach 에서 flushdb 하므로
   // 병렬 워커면 서로의 키를 지운다. 직렬로 고정.
-  // ponytail: 스위트가 커져 느려지면 jest project 별로 Redis DB(0/1) 를 나눠라.
+  // 단순화: 스위트가 커져 느려지면 jest project 별로 Redis DB(0/1) 를 나눠라.
   maxWorkers: 1,
   projects: [
     {

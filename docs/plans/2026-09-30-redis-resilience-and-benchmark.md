@@ -100,8 +100,7 @@ compose production 빌드에 측정 전용 override(레이트리밋 해제, `WEB
 5. **헬스 플래그가 내려갈 때 로그가 없다.** 로그를 세어보니 `redis 복구` 로그는 6건인데 `redis PING 실패` 로그는 0건이었다. ioredis 에러 이벤트가 플래그를 먼저 조용히 `false`로 바꾸고, PING 실패 경고는 "이전에 `true`였을 때"만 찍히기 때문이다. 장애 시각을 로그로 알 수 없다. → Step 1에서 에러 이벤트 쪽에도 전환 로그를 남긴다.
 6. **(미확인) 복구 직후 처리량 저하.** ③ 2·3회차에서 Redis가 다시 뜬 뒤 몇 초간 초당 처리량이 수십~수백 건으로 떨어졌다. 1회차엔 없었다. 원인은 모른다. Step 3 재측정에서 다시 본다.
 
-시각 자료(초 단위 타임라인): https://claude.ai/artifact/TGQnTWpNiuVeHqKL5WP9Jt
-사본: `docs/superpowers/plans/2026-09-30-redis-bench-report.html`
+시각 자료(초 단위 타임라인): `docs/plans/2026-09-30-redis-bench-report.html` (Step 3 이후 전후 비교로 갱신됨)
 
 **계획에 미치는 영향 → 결정: A, B 둘 다 Step 1에 포함 (2026-09-30)**
 - **A. 실패가 "느리게" 온다.** try/catch만 추가하면 500은 사라지지만, 예외가 나기 전까지 수 초~10초를 기다리는 건 그대로다. → ioredis `commandTimeout`으로 빨리 실패하게 한다.
@@ -340,7 +339,7 @@ detector → cooldown 락 (메모리) → dispatch() 직접 호출
 - `/status` N+1 쿼리, 서비스 필터 없는 `/stats`의 인덱스 미사용
 - ~~ioredis 튜닝~~ → Step 0 결과로 Step 1에 편입됨 (`commandTimeout`).
 - 배포와 데모 URL
-- 커밋 트레일러, `docs/superpowers/`, 코드 내 도구 주석 정리
+- 커밋 트레일러, 도구 이름이 들어간 문서 디렉터리, 코드 내 도구 주석 정리 → 2026-10-01 정리함 (디렉터리 이름과 주석 접두어를 바꾸고, README에 개발 방식을 밝혔다. 커밋 트레일러는 유지)
 
 ## 결정 사항
 

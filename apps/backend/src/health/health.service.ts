@@ -13,7 +13,7 @@ export type HealthResult = { status: "ok" } | { status: "degraded"; redis: "down
 @Injectable()
 export class HealthService {
   private readonly logger = new Logger(HealthService.name);
-  // ponytail: 고정 1.5초. 조정할 일이 거의 없어 env로 안 뺀다.
+  // 단순화: 고정 1.5초. 조정할 일이 거의 없어 env로 안 뺀다.
   private static readonly DB_TIMEOUT_MS = 1_500;
 
   constructor(
