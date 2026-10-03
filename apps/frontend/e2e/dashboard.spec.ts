@@ -47,3 +47,19 @@ test("로그아웃하면 로그인 화면으로 가고, 대시보드에 다시 �
   await page.goto("/");
   await expect(page).toHaveURL("/login");
 });
+
+test("/health 가 장애를 알리면 상단 배너, 복구되면 사라진다", async ({ page }) => {
+  // 백엔드 Redis 를 실제로 죽이는 대신 브라우저의 /health 응답만 바꾼다(대시보드 폴링은 브라우저에서 한다).
+  let health: { status: number; body: object } = { status: 200, body: { status: "degraded", redis: "down" } };
+  await page.route("**/health", (route) => route.fulfill({ status: health.status, json: health.body }));
+
+  await login(page);
+  const banner = page.getByRole("status").filter({ hasText: "연결 끊김" });
+  await expect(banner).toContainText("Redis 연결 끊김");
+
+  health = { status: 503, body: { message: "database unavailable" } };
+  await expect(banner).toContainText("DB 연결 끊김", { timeout: 15_000 });
+
+  health = { status: 200, body: { status: "ok" } };
+  await expect(banner).toHaveCount(0, { timeout: 15_000 });
+});

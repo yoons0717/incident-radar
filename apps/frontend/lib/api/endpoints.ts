@@ -1,4 +1,4 @@
-import { Alert, ServiceStatus, StatsResponse } from "@incident-radar/shared";
+import { Alert, HealthResponse, ServiceStatus, StatsResponse } from "@incident-radar/shared";
 import { z } from "zod";
 import { apiGet } from "./client";
 
@@ -29,6 +29,10 @@ export function getStats(p: StatsParams = {}): Promise<StatsResponse> {
     })}`,
     StatsResponse,
   );
+}
+
+export function getHealth(): Promise<HealthResponse> {
+  return apiGet("/health", HealthResponse);
 }
 
 const ServiceStatusList = z.array(ServiceStatus);

@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { AlertsTable } from "@/components/dashboard/alerts-table";
 import { CooldownPanel } from "@/components/dashboard/cooldown-panel";
+import { HealthBanner } from "@/components/dashboard/health-banner";
 import { StatTiles } from "@/components/dashboard/stat-tiles";
 import { TopBar } from "@/components/dashboard/top-bar";
 import { TrendChart } from "@/components/dashboard/trend-chart";
@@ -29,6 +30,7 @@ export default async function Page() {
   return (
     <main className="mx-auto max-w-[1180px] px-[22px] pb-[60px] pt-[22px]">
       <TopBar />
+      <HealthBanner />
       <StatTiles />
       <div className="mt-3 grid gap-3 lg:grid-cols-[1.9fr_1fr]">
         <TrendChart />

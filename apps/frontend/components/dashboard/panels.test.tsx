@@ -1,13 +1,20 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import type { Alert, ServiceStatus } from "@incident-radar/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useAlerts, useStats, useStatus } from "@/lib/api/hooks";
+import { ApiError } from "@/lib/api/client";
+import { useAlerts, useHealth, useStats, useStatus } from "@/lib/api/hooks";
 import { AlertsTable } from "./alerts-table";
 import { CooldownPanel } from "./cooldown-panel";
+import { HealthBanner } from "./health-banner";
 import { StatTiles } from "./stat-tiles";
 
 // 데이터 훅을 가짜로 바꾼다 — 패널이 각 상태를 어떻게 그리는지만 본다(네트워크·폴링 없음).
-vi.mock("@/lib/api/hooks", () => ({ useAlerts: vi.fn(), useStatus: vi.fn(), useStats: vi.fn() }));
+vi.mock("@/lib/api/hooks", () => ({
+  useAlerts: vi.fn(),
+  useStatus: vi.fn(),
+  useStats: vi.fn(),
+  useHealth: vi.fn(),
+}));
 
 /** useQuery 결과 중 패널이 읽는 필드만. */
 function q<T>(over: { data?: T; isError?: boolean; error?: unknown } = {}) {
@@ -106,5 +113,27 @@ describe("StatTiles", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByText("최근 24시간 알림")).toBeTruthy();
     expect(screen.getByText("dispatched 1", { exact: false })).toBeTruthy();
+  });
+});
+
+describe("HealthBanner", () => {
+  it("정상이면 빈 상태 영역만 (배너 없음)", () => {
+    mock(useHealth, q({ data: { status: "ok" } }));
+    render(<HealthBanner />);
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  it("Redis 다운이면 경고 배너", () => {
+    mock(useHealth, q({ data: { status: "degraded", redis: "down" } }));
+    render(<HealthBanner />);
+    const status = screen.getByRole("status");
+    expect(within(status).getByText("Redis 연결 끊김")).toBeTruthy();
+    expect(within(status).getByText(/재시도하지 않아요/)).toBeTruthy();
+  });
+
+  it("503(DB 다운)이면 위험 배너", () => {
+    mock(useHealth, q({ isError: true, error: new ApiError("http", "503", undefined, 503) }));
+    render(<HealthBanner />);
+    expect(within(screen.getByRole("status")).getByText("DB 연결 끊김")).toBeTruthy();
   });
 });

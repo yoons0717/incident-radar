@@ -1,4 +1,4 @@
-import { getAlerts, getStats, getStatus } from "./endpoints";
+import { getAlerts, getHealth, getStats, getStatus } from "./endpoints";
 
 /** 대시보드 폴링 주기. staleTime 과 refetchInterval 에 함께 쓴다. */
 export const POLL_MS = 5_000;
@@ -22,6 +22,10 @@ export function statsQuery({ service = null, rangeMinutes, bucketSec }: StatsQue
     queryFn: () =>
       getStats({ service, fromMs: Date.now() - rangeMinutes * 60_000, bucketSec }),
   };
+}
+
+export function healthQuery() {
+  return { queryKey: ["health"] as const, queryFn: () => getHealth() };
 }
 
 export function statusQuery() {

@@ -76,6 +76,16 @@ export const ServiceStatus = z.object({
 });
 export type ServiceStatus = z.infer<typeof ServiceStatus>;
 
+/**
+ * GET /health 200 응답. DB 가 죽으면 본문 대신 503 이라 여기 없다.
+ * degraded = Redis 다운 — 감지는 DB 로, 알림은 큐 없이 1회 발송으로 버티는 상태.
+ */
+export const HealthResponse = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok") }),
+  z.object({ status: z.literal("degraded"), redis: z.literal("down") }),
+]);
+export type HealthResponse = z.infer<typeof HealthResponse>;
+
 /** GET /stats 응답: 서비스별 시간 버킷 카운트 */
 export const StatsBucket = z.object({
   t: isoDateTime,

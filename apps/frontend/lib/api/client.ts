@@ -14,6 +14,8 @@ export class ApiError extends Error {
     readonly kind: ApiErrorKind,
     message: string,
     override readonly cause?: unknown,
+    /** http 일 때만: 응답 상태 코드 (예: /health 의 503 = DB 다운) */
+    readonly status?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -42,7 +44,7 @@ export async function apiGet<T>(path: string, schema: ZodType<T>): Promise<T> {
     ) {
       window.location.href = "/login";
     }
-    throw new ApiError("http", `GET ${path} → ${res.status} ${res.statusText}`);
+    throw new ApiError("http", `GET ${path} → ${res.status} ${res.statusText}`, undefined, res.status);
   }
 
   let body: unknown;
